@@ -36,11 +36,31 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
     vectorised (`vmath.cpp`). 0.134 s → 0.073 s at T=2016, M≤30, one thread.
     OpenMP throughout.
 - `spikecounter.h/.cpp`: the bin evidences log B(s+σ, g+γ) from `lgamma`
-  tables indexed by the integer counts, and the counts from prefix sums, so no
-  `lgamma` per bin and every row in parallel (0.19 s → 0.014 s at T=2016);
-  the (unused) spike-pair co-occurrence counts from the spiking positions,
-  O(spikes²) per trial instead of O(T²); `mDataVersion`, so the central
-  iteration of the evidences can be reused by the SDF.
+  tables indexed by the integer counts, and the counts from prefix sums (see
+  Memory below); `mDataVersion`, so the central iteration of the evidences can
+  be reused by the SDF.
+- Memory (lean mode, the default with the plain Beta prior): no T×T array.
+  - Per-bin counts and log evidences come from prefix sums and the `lgamma`
+    tables (`spikeCounter::countsOf`, `iecOf`); `mIntervalCounts` and
+    `mIntervalEvidences` are built only when one of the original functor paths
+    needs them (`ensureTables()`, e.g. for `-b`, `-p`, `-y`, `-L`).
+  - The (never read) spike co-occurrence counts are not kept.
+  - The gain matrix exists one column block at a time (T × 64 doubles), built
+    just before that block's m-loop. Completed groups of 256 rows get a fixed
+    scale and are exponentiated once per step, so a block combines them with
+    one multiply per row instead of an `exp`.
+  - The bin posterior runs in tiles (64 bin starts × 512 bin ends), so a chunk
+    of the right-hand factors stays in cache for a whole group of rows.
+  - `forwardBackward` reads the cached forward iteration and the reversed one
+    in place instead of copying them.
+  - Peak memory at 6 weeks (T = 12096, M ≤ 120): 2.1 GB → 61 MB; output
+    byte-identical.
+- The functor paths (`-b`, `-p`, `-y`, `-L`, …) use exact log-additions
+  (`logAddR`) instead of the table lookup when the new paths are on, as do the
+  evidence sums over M, so their averages are as exact as the evidences they
+  are divided by. `-b`'s boundary standard deviations now match those computed
+  from `-p`'s posterior to the printed digits; the original's differ by up to
+  1.4e-4 (the table lookup, through E[k²] − E[k]²).
 - `evidencecomputer.cpp`: `evidenceComputer<evifunc>::computeEvidences`
   (the plain evidences) uses `fb::fastForward` with the plain Beta prior; the
   original table-lookup iteration otherwise.

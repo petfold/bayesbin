@@ -79,91 +79,83 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 	fwd[0] = b;
 	if (mmax == 0 || K == 1) return;
 
-	// E(r,k) = exp(G[r][k] - c[k]) for r < k, stored block-major: column block j (columns
-	// k0 = 64j .. k1-1) holds its rows r = 0..k1-2 contiguously, 64 entries each, zero where k <= r.
-	// A step on one block is then a sequential vector-matrix product with a fixed inner length.
-	const int CB = 64, nb = (K + CB - 1) / CB;
-	vector<size_t> boff(nb + 1, 0);  // block j starts at boff[j]
-	for (int j = 0; j < nb; j++) {
-		const int k1 = std::min(K, (j + 1) * CB);
-		boff[j + 1] = boff[j] + (size_t)std::max(0, k1 - 1) * CB;
-	}
-	std::unique_ptr<double[]> E(new double[boff[nb] ? boff[nb] : 1]);
-	auto rowOf = [&](int j, int r) -> double * { return E.get() + boff[j] + (size_t)r * CB; };
-
-	// pass 1, tile by tile (64 rows of one block: contiguous; iec may be read along rows or, reversed,
-	// along columns, both local within a tile): G and the column maxima
-	vector<std::pair<int, int> > tiles;
-	for (int j = 0; j < nb; j++)
-		for (int i = 0; i * CB < std::min(K, (j + 1) * CB) - 1; i++) tiles.push_back(std::make_pair(i, j));
-	vector<double> c(K, NEG);
-	#pragma omp parallel
-	{
-		vector<double> cl(K, NEG);  // this thread's column maxima
-		#pragma omp for schedule(dynamic)
-		for (int t = 0; t < (int)tiles.size(); t++) {
-			const int j = tiles[t].second, k0 = j * CB, k1 = std::min(K, k0 + CB);
-			const int r0 = tiles[t].first * CB, r1 = std::min(k1 - 1, r0 + CB);
-			for (int r = r0; r < r1; r++) {
-				double *row = rowOf(j, r) - k0;  // row[k], k in [k0, k1)
-				for (int k = k0; k < k1; k++) {
-					if (k <= r) { row[k] = NEG; continue; }
+	// The steps are blocked over columns: block [k0,k1) at step m needs phi_{m-1}[r] for r < k1 only,
+	// which is final (earlier blocks: all m; this block: m-1). So each block's slice of
+	// E(r,k) = exp(G[r][k] - c[k]) is built just before its m-loop and discarded after it: memory
+	// O(K * CB), not O(K^2), and for moderate K the slice stays in cache for all m. The scale p is the maximum of phi_{m-1} over r < k1 (per block and m: consistent
+	// within each column's sum). phi_m = fwd[m] - b is kept in fwd until the end.
+	const int CBMAX = 64, CB = CBMAX;  // (narrower blocks, to fit a slice in cache, measured slower)
+	std::unique_ptr<double[]> Eb(new double[(size_t)K * CB]);
+	for (int k = 0; k < K; k++) fwd[0][k] = 0.0;  // phi_0 = 0
+	// row groups of RG rows (a multiple of CB): once a group's phi_m is complete it gets a fixed scale
+	// Sg[m][g] and V[m][r] = exp(phi_m[r] - Sg[m][g]), exponentiated once; a block then combines groups
+	// with one factor exp(Sg - p) each (a multiply per row, not an exp)
+	const int RG = 256, ng = (K + RG - 1) / RG;
+	vector<vector<double> > V(mmax + 1, vector<double>((size_t)ng * RG, 0.0)), Sg(mmax + 1, vector<double>(ng, NEG));
+	const double floor = 2.0 * K * LOST / tol;  // a lost term (underflow, exp cut-off) is < LOST
+	vector<double> v((size_t)ng * RG), c(CB);
+	double sums[CBMAX];
+	for (int k0 = 0; k0 < K; k0 += CB) {
+		const int k1 = std::min(K, k0 + CB), w = k1 - k0, nr = k1 - 1;  // rows r < k1 - 1 reach it
+		// this block's slice: G and its column maxima, then E = exp(G - c) (vectorised, vmath.cpp)
+		for (int u = 0; u < CB; u++) c[u] = NEG;
+		#pragma omp parallel
+		{
+			double cl[CBMAX];
+			for (int u = 0; u < CB; u++) cl[u] = NEG;
+			#pragma omp for schedule(static)
+			for (int r = 0; r < nr; r++) {
+				double *row = Eb.get() + (size_t)r * CB;
+				for (int u = 0; u < CB; u++) {
+					const int k = k0 + u;
+					if (u >= w || k <= r) { row[u] = NEG; continue; }
 					const double g = iec(r + 1, k) - b[k] + b[r];
-					row[k] = g;
-					cl[k] = fmax(cl[k], g);
+					row[u] = g;
+					cl[u] = fmax(cl[u], g);
 				}
-				for (int k = k1; k < k0 + CB; k++) row[k] = NEG;  // padding of the last block
+			}
+			#pragma omp critical
+			for (int u = 0; u < CB; u++) c[u] = fmax(c[u], cl[u]);
+			#pragma omp barrier
+			#pragma omp for schedule(static)
+			for (int r = 0; r < nr; r++) {
+				double *row = Eb.get() + (size_t)r * CB;
+				for (int u = 0; u < CB; u++)
+					row[u] = row[u] == NEG ? -1000.0 : fmax(row[u] - (c[u] == NEG ? 0.0 : c[u]), -1000.0);
+				vexpInPlace(row, CB);  // -1000 -> exactly 0
 			}
 		}
-		#pragma omp critical
-		for (int k = 0; k < K; k++) c[k] = fmax(c[k], cl[k]);
-	}
-	for (int k = 0; k < K; k++) if (c[k] == NEG) c[k] = 0.0;
-	// pass 2: E = exp(G - c), vectorised (vmath.cpp); the k <= r and padding entries become 0
-	#pragma omp parallel for schedule(dynamic)
-	for (int t = 0; t < (int)tiles.size(); t++) {
-		const int j = tiles[t].second, k0 = j * CB, k1 = std::min(K, k0 + CB);
-		const int r0 = tiles[t].first * CB, r1 = std::min(k1 - 1, r0 + CB);
-		for (int r = r0; r < r1; r++) {
-			double *row = rowOf(j, r);
-			for (int u = 0; u < CB; u++) {
-				const int k = k0 + u;
-				row[u] = (k < k1 && k > r) ? fmax(row[u] - c[k], -1000.0) : -1000.0;  // -> 0
-			}
-			vexpInPlace(row, CB);
-		}
-	}
+		for (int u = 0; u < CB; u++) if (c[u] == NEG) c[u] = 0.0;
 
-	// the steps, blocked over columns: block [k0,k1) at step m needs phi_{m-1}[r] for r < k1 only,
-	// which is final (earlier blocks: all m; this block: m-1), so a block of E stays in cache for all
-	// m instead of E streaming from memory once per m. The scale p is the maximum of phi_{m-1} over
-	// r < k1 (per block and m: consistent within each column's sum).
-	// a term lost (to underflow or the exp cut-off) is < LOST in the scaled sum
-	const double floor = 2.0 * K * LOST / tol;
-	vector<vector<double> > phi(mmax + 1, vector<double>(K, NEG));
-	std::fill(phi[0].begin(), phi[0].end(), 0.0);
-	vector<double> v(K);
-	double sums[CB];
-	for (int j = 0; j < nb; j++) {
-		const int k0 = j * CB, k1 = std::min(K, k0 + CB), nr = k1 - 1;  // rows r < k1 - 1
-		const double *Eb = E.get() + boff[j];
 		for (int m = 1; m <= mmax; m++) {
-			const double *prev = phi[m - 1].data();
+			const double *prev = fwd[m - 1].data();  // phi_{m-1}
+			// scale: completed row groups carry a fixed scale Sg[m-1][g] and V[m-1][r] =
+			// exp(phi - Sg), made once; the current (incomplete) group is exponentiated here
+			const int gcur = (nr > 0 ? (nr - 1) : 0) / RG, rcur = gcur * RG;
 			double p = NEG;
-			for (int r = 0; r < nr; r++) p = fmax(p, prev[r]);
-			if (p == NEG) { for (int k = k0; k < k1; k++) phi[m][k] = NEG; continue; }
-			for (int r = 0; r < nr; r++) v[r] = prev[r] == NEG ? -1000.0 : fmax(prev[r] - p, -1000.0);
-			vexpInPlace(v.data(), nr);
+			for (int g = 0; g < gcur; g++) p = fmax(p, Sg[m - 1][g]);
+			for (int r = rcur; r < nr; r++) p = fmax(p, prev[r]);
+			if (p == NEG) { for (int k = k0; k < k1; k++) fwd[m][k] = NEG; continue; }
+			for (int g = 0; g < gcur; g++) {  // one exp per completed group, a multiply per row
+				const double lf = Sg[m - 1][g] - p;
+				const double f = lf < -700.0 ? 0.0 : exp(lf);
+				const double *Vg = V[m - 1].data() + (size_t)g * RG;
+				double *vg = v.data() + (size_t)g * RG;
+				#pragma omp simd
+				for (int r = 0; r < RG; r++) vg[r] = f * Vg[r];
+			}
+			for (int r = rcur; r < nr; r++) v[r] = prev[r] == NEG ? -1000.0 : fmax(prev[r] - p, -1000.0);
+			if (nr > rcur) vexpInPlace(v.data() + rcur, nr - rcur);
 			for (int u = 0; u < CB; u++) sums[u] = 0.0;
 			#pragma omp parallel
 			{
 				FlushDenormals ftz;
-				double loc[CB];
+				double loc[CBMAX];
 				for (int u = 0; u < CB; u++) loc[u] = 0.0;
 				#pragma omp for schedule(static) nowait
 				for (int r = 0; r < nr; r++) {
 					const double vr = v[r];
-					const double *row = Eb + (size_t)r * CB;
+					const double *row = Eb.get() + (size_t)r * CB;
 					#pragma omp simd
 					for (int u = 0; u < CB; u++) loc[u] += vr * row[u];
 				}
@@ -171,17 +163,33 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 				for (int u = 0; u < CB; u++) sums[u] += loc[u];
 			}
 			for (int k = k0; k < k1; k++) {
-				if (k < m) { phi[m][k] = NEG; continue; }  // needs m boundaries before k
+				if (k < m) { fwd[m][k] = NEG; continue; }  // needs m boundaries before k
 				const double sk = sums[k - k0];
-				if (sk >= floor) { phi[m][k] = log(sk) + p + c[k]; continue; }
+				if (sk >= floor) { fwd[m][k] = log(sk) + p + c[k - k0]; continue; }
 				std::vector<double> buf(k);  // exact column
 				for (int r = 0; r < k; r++) buf[r] = prev[r] + iec(r + 1, k) - b[k] + b[r];
-				phi[m][k] = logSumExp(buf.data(), k);
+				fwd[m][k] = logSumExp(buf.data(), k);
+			}
+			// a row group completed at step m: fix its scale and exponentiate it once
+			if (k1 % RG == 0 || k1 == K) {
+				const int g = (k1 - 1) / RG, g0 = g * RG, g1 = std::min(K, g0 + RG);
+				double sg = NEG;
+				for (int r = g0; r < g1; r++) sg = fmax(sg, fwd[m][r]);
+				Sg[m][g] = sg;
+				double *Vg = V[m].data() + g0;
+				for (int r = g0; r < g1; r++) Vg[r - g0] = (sg == NEG || fwd[m][r] == NEG) ? -1000.0 : fmax(fwd[m][r] - sg, -1000.0);
+				vexpInPlace(Vg, g1 - g0);
 			}
 		}
+		// step 0 (phi_0 = 0) needs its groups too, for step 1 of later blocks
+		if (k1 % RG == 0 || k1 == K) {
+			const int g = (k1 - 1) / RG, g0 = g * RG, g1 = std::min(K, g0 + RG);
+			Sg[0][g] = 0.0;
+			for (int r = g0; r < g1; r++) V[0][r] = 1.0;
+		}
 	}
-	for (int m = 1; m <= mmax; m++)
-		for (int k = 0; k < K; k++) fwd[m][k] = b[k] + phi[m][k];
+	for (int m = 0; m <= mmax; m++)
+		for (int k = 0; k < K; k++) fwd[m][k] += b[k];
 }
 
 /** the last central iteration of the plain evidences, for reuse by forwardBackward:

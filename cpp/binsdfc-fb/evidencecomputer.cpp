@@ -44,6 +44,7 @@ evidenceComputer<AVGFUNC>::~evidenceComputer()
 template<class AVGFUNC>
 void evidenceComputer<AVGFUNC>::computeEvidences()
 {
+	ensureTables();  // the functors read the per-bin tables (lean mode builds them on first need)
 	int k,K,kk,m,lb;
 	mAF.mIP0=mPrior0;
 	mAF.mIP1=mPrior1;
@@ -56,10 +57,18 @@ void evidenceComputer<AVGFUNC>::computeEvidences()
 	kk=-1;
 	for(k=0;k<K;k++) mSubEvidences[k]=mAF(kk,k,m,mIntervalCounts[0][k],mIntervalEvidences[0][k]);
 	mEvidences[0]=mSubEvidences[K-1]+mPriors[0];	
+	// Modified 2026-09-26: with the new paths on, exact log-additions (logAddR) instead of the table
+	// lookup, so that these averages are as exact as the plain evidences they are divided by
+	const bool exact=fb::enabled;
 	for(m=1;m<=mMMax;m++) {
 		lb=(m==mMMax?K-1:m);
 		for(k=K-1;k>=lb;k--) {
 			mSubEvidences[k]=DBL_LARGE_NEG;
+			if(exact)
+			for(int kk=m-1;kk<=k-1;kk++) {
+				logAddInstance.logAddR(mSubEvidences[k],mSubEvidences[kk]+mAF(kk,k,m,mIntervalCounts[kk+1][k-kk-1],mIntervalEvidences[kk+1][k-kk-1]));
+			}
+			else
 			for(int kk=m-1;kk<=k-1;kk++) {
 				logAddInstance.add(mSubEvidences[k],mSubEvidences[kk]+mAF(kk,k,m,mIntervalCounts[kk+1][k-kk-1],mIntervalEvidences[kk+1][k-kk-1]));
 			}
@@ -120,7 +129,10 @@ double evidenceComputer<AVGFUNC>::getEvidenceSum(int m1,int m2) {
 	if(m1<0) m1=0;
 	if(m2>=mEvidences.size()) m2=mEvidences.size()-1;
 	double retval=DBL_LARGE_NEG;
-	for(int i=m1;i<=m2;i++) logAddInstance.add(retval,mEvidences[i]);
+	for(int i=m1;i<=m2;i++) {  // exact log-addition with the new paths on (2026-09-26)
+		if(fb::enabled) logAddInstance.logAddR(retval,mEvidences[i]);
+		else logAddInstance.add(retval,mEvidences[i]);
+	}
 	return retval;	
 }
 
@@ -171,7 +183,7 @@ void evidenceComputer<evifunc>::computeEvidences()
 	mEvidences.resize(mMMax+1);
 	if(fb::enabled && mPUB==1.0 && K>0) {
 		vector<vector<double> > fwd;
-		fb::fastForward(K,mMMax,[this](int a,int b){return mIntervalEvidences[a][b-a];},fwd);
+		fb::fastForward(K,mMMax,[](int a,int b){return iecOf(a,b);},fwd);
 		for(int m=0;m<=mMMax;m++) mEvidences[m]=fwd[m][K-1]+mPriors[m];
 		mSubEvidences=fwd[mMMax];
 		fb::cache.version=mDataVersion;
@@ -180,6 +192,7 @@ void evidenceComputer<evifunc>::computeEvidences()
 		fb::cache.fwd.swap(fwd);
 		return;
 	}
+	ensureTables();
 	int k,kk,m,lb;
 	mAF.mIP0=mPrior0;
 	mAF.mIP1=mPrior1;
@@ -190,10 +203,18 @@ void evidenceComputer<evifunc>::computeEvidences()
 	kk=-1;
 	for(k=0;k<K;k++) mSubEvidences[k]=mAF(kk,k,m,mIntervalCounts[0][k],mIntervalEvidences[0][k]);
 	mEvidences[0]=mSubEvidences[K-1]+mPriors[0];	
+	// Modified 2026-09-26: with the new paths on, exact log-additions (logAddR) instead of the table
+	// lookup, so that these averages are as exact as the plain evidences they are divided by
+	const bool exact=fb::enabled;
 	for(m=1;m<=mMMax;m++) {
 		lb=(m==mMMax?K-1:m);
 		for(k=K-1;k>=lb;k--) {
 			mSubEvidences[k]=DBL_LARGE_NEG;
+			if(exact)
+			for(int kk=m-1;kk<=k-1;kk++) {
+				logAddInstance.logAddR(mSubEvidences[k],mSubEvidences[kk]+mAF(kk,k,m,mIntervalCounts[kk+1][k-kk-1],mIntervalEvidences[kk+1][k-kk-1]));
+			}
+			else
 			for(int kk=m-1;kk<=k-1;kk++) {
 				logAddInstance.add(mSubEvidences[k],mSubEvidences[kk]+mAF(kk,k,m,mIntervalCounts[kk+1][k-kk-1],mIntervalEvidences[kk+1][k-kk-1]));
 			}

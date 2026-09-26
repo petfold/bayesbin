@@ -260,3 +260,24 @@ def test_forward_backward_cpp_on_data_that_exercises_the_underflow_bounds():
     r = fit(BernoulliModel(s, g), 12, m_mass=0.9, exact=True)
     np.testing.assert_allclose(fb[:, 1], r.rate, rtol=6e-6)
     np.testing.assert_allclose(fb[:, 2], r.rate_std, rtol=6e-6, atol=1e-6)
+
+
+@pytest.mark.skipif(not _FB.exists(), reason="cpp/binsdfc-fb not built (see its README.fb.md)")
+def test_forward_backward_cpp_boundary_moments_match_their_posterior():
+    """The lean mode keeps the original's other features (here -b, -p) working, now exactly:
+    the boundary means and sds from -b equal those of the -p posterior distributions."""
+    import subprocess
+
+    base = [str(_FB), "-s", "-100", "-e", "500", "-m", "10", "-n"]
+    data = str(DATA / "testdata_seed1.txt")
+    moments = np.loadtxt(subprocess.run(base + ["-b", "3", data], capture_output=True, text=True,
+                                        check=True).stdout.splitlines())
+    post = np.loadtxt(subprocess.run(base + ["-p", "3", data], capture_output=True, text=True,
+                                     check=True).stdout.splitlines())
+    k = post[:, 0]  # boundary positions on the time axis, as -b reports them
+    for j in range(3):
+        p = post[:, j + 1] / post[:, j + 1].sum()
+        mean = (p * k).sum()
+        sd = np.sqrt((p * (k - mean) ** 2).sum())
+        assert moments[j, 1] == pytest.approx(mean, rel=1e-5)
+        assert moments[j, 2] == pytest.approx(sd, rel=2e-5)

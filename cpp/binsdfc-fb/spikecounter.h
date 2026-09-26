@@ -105,10 +105,29 @@ protected:
     /** incremented whenever the sub-interval counts/evidences are recomputed (added 2026-09-26: lets
         forwardBackward reuse the central iteration of the evidences) */
     static unsigned long mDataVersion;
+    /** lean mode (added 2026-09-26; plain Beta prior, new paths on): no T^2 tables. Per-bin counts
+        and evidences come from prefix sums and lgamma tables, O(T) memory; the full tables are built
+        by ensureTables() only for the original functor paths that read them. */
+    static vector<int> mCum1, mCum0;      // prefix sums of spikes and gaps, size T+1
+    static vector<double> mLgA, mLgB, mLgC;  // lgamma(s+prior1), lgamma(g+prior0), lgamma(n+prior1+prior0)
+    static bool mHaveTables;              // mIntervalCounts/mIntervalEvidences are current
+public:
+    /** spikes and gaps in the bin a..b (inclusive), lean mode */
+    static inline pair<int,int> countsOf(int a,int b) { return pair<int,int>(mCum1[b+1]-mCum1[a],mCum0[b+1]-mCum0[a]); }
+    /** log evidence contribution of the bin a..b, prior normalisation excluded (as mIntervalEvidences), lean mode */
+    static inline double iecOf(int a,int b) {
+	const int s=mCum1[b+1]-mCum1[a],g=mCum0[b+1]-mCum0[a];
+	return mLgA[s]+mLgB[g]-mLgC[s+g];
+    }
+    /** true when the lean representation is in use */
+    static bool lean();
+    /** build mIntervalCounts/mIntervalEvidences if the lean mode left them out */
+    void ensureTables();
+protected:
     
 protected:
     /** allocate storage for mIntervalEvidences and mIntervalCounts */
-    bool allocArrays();
+    bool allocArrays(bool force=false);
     /** precompute counts and sub-evidences from current spiketrain. */
     virtual void precomputeSubIntervals();
     /** compute M-priors. Return false if impossible (i.e. mMMax>mIntervEnd-mIntervStart-1) */

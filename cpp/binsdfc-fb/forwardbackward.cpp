@@ -23,8 +23,7 @@ void forwardBackward::forward(int mmax, vector<vector<double> > &fwd)
 {
 	precomputeSubIntervals();
 	const int K = mIntervEnd - mIntervStart;
-	fb::fastForward(K, min(mmax, K - 1),
-			[this](int a, int b) { return mIntervalEvidences[a][b - a]; }, fwd);
+	fb::fastForward(K, min(mmax, K - 1), [](int a, int b) { return iecOf(a, b); }, fwd);
 }
 
 void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2,
@@ -38,24 +37,21 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	sdf2.assign(K, 0.0);
 	if (K <= 0 || m1 > m2) return;
 
-	// IEC(a,b): log evidence contribution of the bin a..b (inclusive), prior normalisation excluded
-	auto IEC = [this](int a, int b) -> double { return mIntervalEvidences[a][b - a]; };
+	// IEC(a,b): log evidence contribution of the bin a..b (inclusive), prior normalisation excluded,
+	// from prefix sums and lgamma tables (no K^2 table)
+	auto IEC = [](int a, int b) -> double { return iecOf(a, b); };
 
 	// forward: fwd[m][k] = log evidence of 0..k as m+1 bins, the last ending at k
-	// (the plain evidences already ran it for these data: reuse)
-	vector<vector<double> > fwd;
-	if (fb::cache.version == mDataVersion && fb::cache.K == K && fb::cache.mmax >= m2)
-		fwd.assign(fb::cache.fwd.begin(), fb::cache.fwd.begin() + m2 + 1);
-	else
-		fb::fastForward(K, m2, IEC, fwd);
+	// (the plain evidences already ran it for these data: reuse, by reference)
+	vector<vector<double> > own;
+	const bool cached = fb::cache.version == mDataVersion && fb::cache.K == K && fb::cache.mmax >= m2;
+	if (!cached) fb::fastForward(K, m2, IEC, own);
+	const vector<vector<double> > &fwd = cached ? fb::cache.fwd : own;
 
 	// backward, as the forward iteration on the reversed time axis:
-	// bwd[j][k] = log evidence of k+1..K-1 as j+1 bins = rev[j][K-2-k]
+	// bwd[j][k] = log evidence of k+1..K-1 as j+1 bins = rev[j][K-2-k] (read in place)
 	vector<vector<double> > rev;
 	fb::fastForward(K, m2, [&](int a, int b) { return IEC(K - 1 - b, K - 1 - a); }, rev);
-	vector<vector<double> > bwd(m2 + 1, vector<double>(K, NEG));
-	for (int j = 0; j <= m2; j++)
-		for (int k = 0; k <= K - 2; k++) bwd[j][k] = rev[j][K - 2 - k];
 
 	// weights of the models: c[M] = log(P(M|D) / sum_{m1..m2} P) - log E_unnormalised[M]
 	vector<double> ev(logEvidences.begin() + m1, logEvidences.begin() + m2 + 1);
@@ -64,13 +60,17 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	for (int M = m1; M <= m2; M++) c[M] = logEvidences[M] - evSum - fwd[M][K - 1];
 
 	const int NI = m2 + 1;
-	// right messages right_j[b] (tail b+1..K-1 as j bins), folded with the model weights:
-	// R[b*NI+i] = log sum_j c[i+j] * right_j[b]; left messages L[a*NI+i] (head 0..a-1 as i bins)
+	// messages: left_i[a] (head 0..a-1 as i bins), right_j[b] (tail b+1..K-1 as j bins); the right
+	// ones folded with the model weights: Rl[b*NI+i] = log sum_j c[i+j] * right_j[b]
+	auto left = [&](int i, int a) -> double {
+		if (i == 0) return a == 0 ? 0.0 : NEG;
+		return a >= 1 ? fwd[i - 1][a - 1] : NEG;
+	};
 	auto right = [&](int j, int b) -> double {
 		if (j == 0) return b == K - 1 ? 0.0 : NEG;
-		return b <= K - 2 ? bwd[j - 1][b] : NEG;
+		return b <= K - 2 ? rev[j - 1][K - 2 - b] : NEG;
 	};
-	vector<double> Rl((size_t)K * NI, NEG), Ll((size_t)K * NI, NEG);
+	vector<double> Rl((size_t)K * NI, NEG);
 	#pragma omp parallel for schedule(static)
 	for (int t = 0; t < K; t++) {
 		vector<double> buf(NI);
@@ -78,22 +78,17 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 			int n = 0;
 			for (int j = 0; i + j <= m2; j++) buf[n++] = c[i + j] + right(j, t);
 			Rl[(size_t)t * NI + i] = logSumExp(buf.data(), n);
-			Ll[(size_t)t * NI + i] = i == 0 ? (t == 0 ? 0.0 : NEG) : (t >= 1 ? fwd[i - 1][t - 1] : NEG);
 		}
 	}
-	// scaled once: A[a*NI+i] = exp(L - ma[a]); Bt[i*K+b] = exp(R - mb[b]), i-major so that the
-	// sum over the bin index runs as contiguous multiply-adds along b
-	vector<double> A((size_t)K * NI), Bt((size_t)NI * K), ma(K), mb(K);
+	// scaled once: Bt[i*K+b] = exp(R - mb[b]), i-major so that the sum over the bin index runs as
+	// contiguous multiply-adds along b; the left factors exp(left - ma[a]) are made per row
+	vector<double> Bt((size_t)NI * K), mb(K);
 	#pragma omp parallel for schedule(static)
 	for (int t = 0; t < K; t++) {
-		double x = NEG, y = NEG;
-		for (int i = 0; i < NI; i++) { x = fmax(x, Ll[(size_t)t * NI + i]); y = fmax(y, Rl[(size_t)t * NI + i]); }
-		ma[t] = x == NEG ? 0.0 : x;
+		double y = NEG;
+		for (int i = 0; i < NI; i++) y = fmax(y, Rl[(size_t)t * NI + i]);
 		mb[t] = y == NEG ? 0.0 : y;
-		for (int i = 0; i < NI; i++) {
-			A[(size_t)t * NI + i] = exp(Ll[(size_t)t * NI + i] - ma[t]);
-			Bt[(size_t)i * K + t] = exp(Rl[(size_t)t * NI + i] - mb[t]);
-		}
+		for (int i = 0; i < NI; i++) Bt[(size_t)i * K + t] = exp(Rl[(size_t)t * NI + i] - mb[t]);
 	}
 	const double p1 = mPrior1, p01 = mPrior1 + mPrior0;
 	// every interval holds one spike or gap per trial, so a bin's total count n depends only on its
@@ -115,65 +110,92 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	const double logRisk = log(NI * fb::LOST) - log(1e-14);
 	const int nthreads = omp_get_max_threads();
 	vector<vector<double> > d1(nthreads, vector<double>(K + 1, 0.0)), d2(nthreads, vector<double>(K + 1, 0.0));
+	// tiled: bin starts a in groups of AB, ends b in chunks of BC, so that a chunk of Bt (NI x BC)
+	// stays in cache for all AB rows of a group instead of NI rows of length K-a streaming per row
+	const int AB = 64, BC = 512;
+	const int nga = (K + AB - 1) / AB;
 	#pragma omp parallel
 	{
 		fb::FlushDenormals ftz;
 		const int tid = omp_get_thread_num();
-		vector<double> W(K), sh(K), m1(K), m2(K), q1(K), q2(K), buf(NI);
+		vector<double> W(BC), sh(BC), iec(BC), m1v(BC), m2v(BC), q1(BC), q2(BC), buf(NI);
+		vector<double> Aall((size_t)AB * NI), Lall((size_t)AB * NI), mall(AB), row1(AB), row2(AB);
 		vector<int> risky;
 		double *D1 = d1[tid].data(), *D2 = d2[tid].data();
-		#pragma omp for schedule(guided)
-		for (int a = 0; a < K; a++) {
-			const int len = K - a;  // b = a..K-1 at index u = b - a
-			const double *Aa = &A[(size_t)a * NI];
-			const double *iec = mIntervalEvidences[a].data();
-			const pair<int, int> *cnt = mIntervalCounts[a].data();
-			const double *mbA = mb.data() + a;
-			double *w = W.data(), *h = sh.data(), *e1 = m1.data(), *e2 = m2.data(), *r1 = q1.data(), *r2 = q2.data();
-			// posterior moments of each bin a..b, and the scale shift of W
-			if (uniform) {
-				const double *i1 = inv1.data() + 1, *i2 = inv2.data() + 1;  // index by u = len-1
-				for (int u = 0; u < len; u++) {
-					const double s1 = cnt[u].first + p1;
-					e1[u] = s1 * i1[u];
-					e2[u] = e1[u] * (s1 + 1.0) * i2[u];
+		const int *C1 = mCum1.data(), *C0 = mCum0.data();
+		#pragma omp for schedule(dynamic)
+		for (int ga = 0; ga < nga; ga++) {
+			const int a0 = ga * AB, a1 = min(K, a0 + AB);
+			// the left factors of this group's rows: exp(left_i[a] - ma[a])
+			for (int a = a0; a < a1; a++) {
+				double *La = &Lall[(size_t)(a - a0) * NI], *Aa = &Aall[(size_t)(a - a0) * NI];
+				double ma = NEG;
+				for (int i = 0; i < NI; i++) { La[i] = left(i, a); ma = fmax(ma, La[i]); }
+				if (ma == NEG) ma = 0.0;
+				mall[a - a0] = ma;
+				for (int i = 0; i < NI; i++) Aa[i] = exp(La[i] - ma);
+				row1[a - a0] = row2[a - a0] = 0.0;
+			}
+			for (int b0 = a0; b0 < K; b0 += BC) {
+				const int b1 = min(K, b0 + BC);
+				for (int a = a0; a < a1; a++) {
+					const int bs = max(a, b0), len = b1 - bs;  // this row's bins b = bs..b1-1, u = b - bs
+					if (len <= 0) continue;
+					const double *Aa = &Aall[(size_t)(a - a0) * NI], *La = &Lall[(size_t)(a - a0) * NI];
+					const double ma = mall[a - a0];
+					const double *mbA = mb.data() + bs;
+					double *w = W.data(), *h = sh.data(), *ie = iec.data(), *e1 = m1v.data(), *e2 = m2v.data();
+					double *r1 = q1.data(), *r2 = q2.data();
+					// per bin a..b: counts, evidence, posterior moments, and the scale shift of W
+					for (int u = 0; u < len; u++) {
+						const int b = bs + u;
+						const int sp = C1[b + 1] - C1[a], g = C0[b + 1] - C0[a];
+						ie[u] = mLgA[sp] + mLgB[g] - mLgC[sp + g];
+						const double s1 = sp + p1;
+						if (uniform) {
+							e1[u] = s1 * inv1[b - a + 1];
+							e2[u] = e1[u] * (s1 + 1.0) * inv2[b - a + 1];
+						} else {
+							const double n1 = sp + g + p01;
+							e1[u] = s1 / n1;
+							e2[u] = e1[u] * (s1 + 1.0) / (n1 + 1.0);
+						}
+					}
+					#pragma omp simd
+					for (int u = 0; u < len; u++) { h[u] = ma + mbA[u] + ie[u]; w[u] = 0.0; }
+					// sum over the bin index: contiguous multiply-adds along b, Bt chunk from cache
+					for (int i = 0; i < NI; i++) {
+						const double ai = Aa[i];
+						if (ai == 0.0) continue;
+						const double *Bi = &Bt[(size_t)i * K + bs];
+						#pragma omp simd
+						for (int u = 0; u < len; u++) w[u] += ai * Bi[u];
+					}
+					vexpMul(w, h, len);
+					risky.clear();
+					for (int u = 0; u < len; u++)
+						if (h[u] + logRisk > 0.0) risky.push_back(u);
+					for (int u : risky) {  // underflow could matter: exact, in log space
+						for (int i = 0; i < NI; i++) buf[i] = La[i] + Rl[(size_t)(bs + u) * NI + i];
+						const double lw = logSumExp(buf.data(), NI);
+						w[u] = lw == NEG ? 0.0 : exp(lw + ie[u]);
+					}
+					double s1r = 0.0, s2r = 0.0;
+					#pragma omp simd reduction(+:s1r,s2r)
+					for (int u = 0; u < len; u++) {
+						r1[u] = w[u] * e1[u];
+						r2[u] = w[u] * e2[u];
+						s1r += r1[u];
+						s2r += r2[u];
+					}
+					row1[a - a0] += s1r;
+					row2[a - a0] += s2r;
+					// range-add over a..b: -q at b+1 (the +q at a is the row sum, added below)
+					#pragma omp simd
+					for (int u = 0; u < len; u++) { D1[bs + u + 1] -= r1[u]; D2[bs + u + 1] -= r2[u]; }
 				}
-			} else {
-				for (int u = 0; u < len; u++) {
-					const double s1 = cnt[u].first + p1, n1 = cnt[u].first + cnt[u].second + p01;
-					e1[u] = s1 / n1;
-					e2[u] = e1[u] * (s1 + 1.0) / (n1 + 1.0);
-				}
 			}
-			#pragma omp simd
-			for (int u = 0; u < len; u++) { h[u] = ma[a] + mbA[u] + iec[u]; w[u] = 0.0; }
-			// sum over the bin index: contiguous multiply-adds along b
-			for (int i = 0; i < NI; i++) {
-				const double ai = Aa[i];
-				if (ai == 0.0) continue;
-				const double *Bi = &Bt[(size_t)i * K + a];
-				#pragma omp simd
-				for (int u = 0; u < len; u++) w[u] += ai * Bi[u];
-			}
-			vexpMul(w, h, len);
-			risky.clear();
-			for (int u = 0; u < len; u++)
-				if (h[u] + logRisk > 0.0) risky.push_back(u);
-			for (int u : risky) {  // underflow could matter: exact, in log space
-				for (int i = 0; i < NI; i++) buf[i] = Ll[(size_t)a * NI + i] + Rl[(size_t)(a + u) * NI + i];
-				const double lw = logSumExp(buf.data(), NI);
-				w[u] = lw == NEG ? 0.0 : exp(lw + iec[u]);
-			}
-			#pragma omp simd
-			for (int u = 0; u < len; u++) { r1[u] = w[u] * e1[u]; r2[u] = w[u] * e2[u]; }
-			double row1 = 0.0, row2 = 0.0;
-			#pragma omp simd reduction(+:row1,row2)
-			for (int u = 0; u < len; u++) { row1 += r1[u]; row2 += r2[u]; }
-			// range-add over a..b: +q at a (the row sum), -q at b+1
-			D1[a] += row1;
-			D2[a] += row2;
-			#pragma omp simd
-			for (int u = 0; u < len; u++) { D1[a + u + 1] -= r1[u]; D2[a + u + 1] -= r2[u]; }
+			for (int a = a0; a < a1; a++) { D1[a] += row1[a - a0]; D2[a] += row2[a - a0]; }
 		}
 	}
 	double acc1 = 0.0, acc2 = 0.0;

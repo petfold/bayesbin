@@ -89,9 +89,12 @@ void spikeCounter::setIntervalPrior(double p0,double p1,double pub)
 /*!
     \fn spikeCounter::allocArrays()
  */
-bool spikeCounter::allocArrays()
+bool spikeCounter::lean() { return fb::enabled && mPUB==1.0; }
+
+bool spikeCounter::allocArrays(bool force)
 {
 	int i,j,cs;
+	if(lean() && !force) return true;  // no T^2 tables (and no unused co-occurrence counts) in lean mode
 
 	if(mAutoCorr.size()!=mIntervEnd-mIntervStart) {
 		mAutoCorr.resize(mIntervEnd-mIntervStart);
@@ -152,7 +155,8 @@ void spikeCounter::addData(vector<int>::iterator begin,vector<int>::iterator end
 			
 	}
 	
-	if(fb::enabled) {  // the same counts, from the positions that spiked: O(spikes^2), not O(T^2)
+	if(mAutoCorr.size()!=mCurSp.size()) {}  // lean mode: the (never read) co-occurrence counts are not kept
+	else if(fb::enabled) {  // the same counts, from the positions that spiked: O(spikes^2), not O(T^2)
 		vector<int> idx;
 		for(i=0;i<(int)mCurSp.size();i++) if(mCurSp[i]) idx.push_back(i);
 		for(unsigned p=0;p<idx.size();p++)
@@ -175,32 +179,25 @@ void spikeCounter::precomputeSubIntervals()
 {
 	int i,j,cs;
 	if(!mbDataChanged) return;
-	allocArrays();
 	mDataVersion++;
-	if(fb::enabled && mPUB==1.0) {
-		// counts from prefix sums and log Beta(s+prior1, g+prior0) from lgamma tables indexed by the
-		// integer counts: no lgamma per bin, and every row independent (in parallel)
-		const int K=mIntervalCounts.size();
-		vector<int> c1(K+1,0),c0(K+1,0);
-		for(i=0;i<K;i++) { c1[i+1]=c1[i]+mSpikeTrain[i].first; c0[i+1]=c0[i]+mSpikeTrain[i].second; }
-		const int S=c1[K],G=c0[K];
-		vector<double> lA(S+1),lB(G+1),lC(S+G+1);  // lgamma is not thread-safe (signgam): build here
-		for(int s=0;s<=S;s++) lA[s]=lgamma(s+mPrior1);
-		for(int g=0;g<=G;g++) lB[g]=lgamma(g+mPrior0);
-		for(int n=0;n<=S+G;n++) lC[n]=lgamma(n+mPrior1+mPrior0);
-		#pragma omp parallel for schedule(guided)
-		for(int a=0;a<K;a++) {
-			const int len=mIntervalCounts[a].size();
-			for(int jj=0;jj<len;jj++) {
-				const int s=c1[a+jj+1]-c1[a],g=c0[a+jj+1]-c0[a];
-				mIntervalCounts[a][jj].first=s;
-				mIntervalCounts[a][jj].second=g;
-				mIntervalEvidences[a][jj]=lA[s]+lB[g]-lC[s+g];
-			}
-		}
+	if(lean()) {
+		// prefix sums and lgamma tables indexed by the integer counts: per-bin counts and evidences in
+		// O(1) each, O(T) memory (countsOf, iecOf); the T^2 tables only via ensureTables()
+		const int K=mSpikeTrain.size();
+		mCum1.assign(K+1,0);
+		mCum0.assign(K+1,0);
+		for(i=0;i<K;i++) { mCum1[i+1]=mCum1[i]+mSpikeTrain[i].first; mCum0[i+1]=mCum0[i]+mSpikeTrain[i].second; }
+		const int S=mCum1[K],G=mCum0[K];
+		mLgA.resize(S+1); mLgB.resize(G+1); mLgC.resize(S+G+1);  // lgamma is not thread-safe (signgam)
+		for(int s=0;s<=S;s++) mLgA[s]=lgamma(s+mPrior1);
+		for(int g=0;g<=G;g++) mLgB[g]=lgamma(g+mPrior0);
+		for(int n=0;n<=S+G;n++) mLgC[n]=lgamma(n+mPrior1+mPrior0);
+		mHaveTables=false;
 		mbDataChanged=false;
 		return;
 	}
+	allocArrays();
+	mHaveTables=true;
 	for(i=mIntervalCounts.size()-1;i>=0;i--) {
 		mIntervalCounts[i][0]=mSpikeTrain[i];
 		if(mPUB==1.0) mIntervalEvidences[i][0]=logAddInstance.getBeta(mIntervalCounts[i][0].first+mPrior1,mIntervalCounts[i][0].second+mPrior0);
@@ -215,6 +212,26 @@ void spikeCounter::precomputeSubIntervals()
 	mbDataChanged=false;
 }
 
+/*!
+    \fn spikeCounter::ensureTables()
+ */
+void spikeCounter::ensureTables()
+{
+	precomputeSubIntervals();
+	if(!lean() || mHaveTables) return;
+	allocArrays(true);
+	const int K=mIntervalCounts.size();
+	#pragma omp parallel for schedule(guided)
+	for(int a=0;a<K;a++) {
+		const int len=mIntervalCounts[a].size();
+		for(int jj=0;jj<len;jj++) {
+			mIntervalCounts[a][jj]=countsOf(a,a+jj);
+			mIntervalEvidences[a][jj]=iecOf(a,a+jj);
+		}
+	}
+	mHaveTables=true;
+}
+
 
 /*!
     \fn spikeCounter::getSpikes()
@@ -222,6 +239,7 @@ void spikeCounter::precomputeSubIntervals()
 int spikeCounter::getSpikes()
 {
 	precomputeSubIntervals();
+	if(lean()) return mCum1.back();
 	return mIntervalCounts[0][mIntervalCounts[0].size()-1].first;
 }
 
@@ -232,6 +250,7 @@ int spikeCounter::getSpikes()
 int spikeCounter::getGaps()
 {
 	precomputeSubIntervals();
+	if(lean()) return mCum0.back();
 	return mIntervalCounts[0][mIntervalCounts[0].size()-1].second;
 }
 
@@ -293,6 +312,9 @@ vector<vector<double> > spikeCounter::mIntervalEvidences;
 vector<vector<pair<int,int> > > spikeCounter::mIntervalCounts;
 vector<double> spikeCounter::mPriors;
 unsigned long spikeCounter::mDataVersion=0;
+vector<int> spikeCounter::mCum1,spikeCounter::mCum0;
+vector<double> spikeCounter::mLgA,spikeCounter::mLgB,spikeCounter::mLgC;
+bool spikeCounter::mHaveTables=false;
 double spikeCounter::mPrior1,spikeCounter::mPrior0;
 int spikeCounter::mIntervStart,spikeCounter::mIntervEnd;
 int spikeCounter::mMMax;
