@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: bayesbin
+abstract: Exact Bayesian binning of rates in NumPy/SciPy.
+type: software
+license: BSD-3-Clause
+repository-code: https://github.com/petfold/bayesbin
+authors:
+  - family-names: Földiák
+    given-names: Peter
+preferred-citation:
+  type: conference-paper
+  title: "Bayesian binning beats approximate alternatives: estimating peri-stimulus time histograms"
+  authors:
+    - family-names: Endres
+      given-names: Dominik
+    - family-names: Oram
+      given-names: Mike
+    - family-names: Schindelin
+      given-names: Johannes
+    - family-names: Földiák
+      given-names: Peter
+  collection-title: Advances in Neural Information Processing Systems 20
+  publisher:
+    name: MIT Press
+  start: 393
+  end: 400
+  year: 2008
+  url: https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html

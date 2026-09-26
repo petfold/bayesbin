@@ -1,4 +1,4 @@
-// Modified 2026-09-26: plain evidences via forwardbackward.h (see README.fb.md).
+// Modified 2026-09-26 by Peter Földiák: plain evidences via forwardbackward.h (see README.fb.md).
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *

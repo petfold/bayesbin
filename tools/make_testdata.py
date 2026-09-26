@@ -3,6 +3,11 @@
 background 0.01/ms, a transient of 0.08/ms from 80 ms for 50 ms, then 0.05/ms
 for 250 ms. Writes binsdfc's input format to stdout:
     <stimulus name> <spike time 1> ... <spike time N>
+
+Derived from testdata.py in binsdfc 0.1, Copyright (C) 2006-2007 Dominik Endres;
+like it, this file is under the GNU General Public License, version 2 or (at
+your option) any later version (see cpp/COPYING). The rest of tools/ and the
+Python package are BSD-3-Clause.
 """
 
 import sys

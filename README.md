@@ -5,7 +5,7 @@ Exact Bayesian binning of rates in NumPy/SciPy, after
 > D. Endres, M. Oram, J. Schindelin, P. Földiák (2008). *Bayesian binning beats
 > approximate alternatives: estimating peri-stimulus time histograms.*
 > Advances in Neural Information Processing Systems 20, 393–400. MIT Press.
-> ([paper/](paper/))
+> ([paper](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html))
 
 A rate on T ordered intervals is modelled as piecewise constant with M bin
 boundaries. Boundary positions, per-bin rates (conjugate priors) and M itself
@@ -13,6 +13,11 @@ are all integrated out exactly: one forward dynamic programme gives the
 evidence of every M in O(M·T²). A matching backward programme gives the
 posterior of every candidate bin at once, from which the predictive rate, its
 error bars and the posterior over boundary positions follow.
+
+```sh
+pip install "bayesbin @ git+https://github.com/petfold/bayesbin"          # NumPy/SciPy only
+pip install "bayesbin[fast] @ git+https://github.com/petfold/bayesbin"    # + numba kernels, ~2x faster
+```
 
 ```python
 from bayesbin import BernoulliModel, PoissonModel, fit, spike_counts
@@ -37,6 +42,36 @@ bayesbin[fast]`) the element-wise work runs in fused kernels, about 2× faster;
 the first call in a new environment compiles them (a few seconds, cached
 afterwards), and `BAYESBIN_NUMBA=0` switches them off. Both paths give the same
 results to rounding.
+
+## What it is for
+
+Any rate that varies along an ordered axis and is observed as events per
+interval, where you want the rate *and* its uncertainty without choosing bin
+widths by hand:
+
+- **Peri-stimulus time histograms** (the paper's case): spike trains over
+  repeated trials, the firing probability per millisecond, with error bars,
+  from a few dozen trials.
+- **Event counts per window**: arrivals, requests, incidents, photon or
+  particle counts, cases per week — with an exposure per window (observation
+  time, population, detector area) when windows differ.
+- **Proportions along an axis**: successes out of trials per interval
+  (conversion or failure rates by time of day, by age, by dose), with the
+  Bernoulli model.
+- **Change points**: `boundary_posterior` is the posterior probability that the
+  rate changes after each interval, averaged over every segmentation.
+- **Periodic profiles**: daily or weekly shapes, with the days (or weeks) as
+  trials and the time of day as the axis.
+
+Nothing is fitted by optimisation and nothing is sampled: every segmentation
+into up to M + 1 bins, and every M, is summed exactly. Compared with
+Bayesian Blocks (Scargle et al. 2013, ApJ 764:167; `astropy.stats.bayesian_blocks`),
+which finds the single best segmentation under a penalty per block, this
+averages over all segmentations, so the rate is smooth where the data do not
+decide where a step is, and comes with error bars.
+
+The axis is 1-D; see [docs/NOTES.md](docs/NOTES.md) for how far this extends
+to two dimensions.
 
 ## Models
 
@@ -160,7 +195,35 @@ laptop was thermally throttled (about 2.3 GHz).
 
 ## Licence
 
-Not chosen yet. The code in `src/` was written from the paper; the original
-program was used only as a reference to test against. `reference/binsdfc-0.1/`
-is the original, GPL-2.0-or-later, kept unmodified with its provenance in
-[reference/README.md](reference/README.md).
+Two licences, by directory:
+
+- **BSD-3-Clause** ([LICENSE](LICENSE)): the Python package `src/bayesbin` (all
+  that `pip` installs), its tests, `tools/bench_vs_binsdfc.py` and the
+  documentation. The package was written from the paper; the C++ program was
+  used only as a reference to test against, and none of its code is in it.
+- **GPL-2.0-or-later**: [reference/binsdfc-0.1/](reference/) (Dominik Endres's
+  original, unmodified, with its provenance in [reference/README.md](reference/README.md)),
+  [cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md) (that program with a
+  forward–backward SDF and the speed-ups described there, each changed file
+  marked) and `tools/make_testdata.py` (a port of its test-data script). Their
+  licence text is in [cpp/COPYING](cpp/COPYING) and
+  [reference/COPYING](reference/COPYING).
+
+## Citing
+
+If you use this, please cite the paper:
+
+```bibtex
+@inproceedings{endres2008bayesian,
+  title     = {Bayesian binning beats approximate alternatives: estimating peri-stimulus time histograms},
+  author    = {Endres, Dominik and Oram, Mike and Schindelin, Johannes and F{\"o}ldi{\'a}k, Peter},
+  booktitle = {Advances in Neural Information Processing Systems 20},
+  pages     = {393--400},
+  publisher = {MIT Press},
+  year      = {2008}
+}
+```
+
+The method is Endres, Oram, Schindelin and Földiák's; binsdfc, the original
+C++ implementation, is Dominik Endres's; bayesbin and the binsdfc-fb changes
+are by Peter Földiák.

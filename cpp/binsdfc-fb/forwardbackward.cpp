@@ -1,6 +1,7 @@
 /***************************************************************************
  *   Forward-backward computation of the SDF for binsdfc.                  *
  *   Added 2026 to binsdfc 0.1 (Copyright (C) 2007 by Dominik Endres).     *
+ *   Copyright (C) 2026 by Peter Földiák                                   *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *

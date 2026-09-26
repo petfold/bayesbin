@@ -1,4 +1,4 @@
-# Modified 2026-09-26: forwardbackward.cpp and vmath.cpp added (SDF by forward-backward)
+# Modified 2026-09-26 by Peter Földiák: forwardbackward.cpp and vmath.cpp added (SDF by forward-backward)
 
 PROJECT(binsdfc)
 

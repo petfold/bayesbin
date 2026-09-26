@@ -4,7 +4,7 @@
 
 - D. Endres, M. Oram, J. Schindelin, P. Földiák (2008). *Bayesian binning beats
   approximate alternatives: estimating peri-stimulus time histograms.* NIPS 20,
-  393–400. — the method implemented here ([paper/](../paper/)).
+  393–400. — the method implemented here ([NeurIPS](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html)).
 - D. Endres, P. Földiák (2005). *Bayesian bin distribution inference and mutual
   information.* IEEE Trans. Information Theory 51(11). — the density-estimation
   formalism the dynamic programme comes from; also mutual information.
@@ -32,7 +32,7 @@
   √TINY (forward) or below 2^-1011 after an exact 2^500 scaling (bin posterior,
   whose error bound needed the tighter cut) removes them; the bounds count the
   flushed terms as lost. That alone took the NumPy path from 30 s to 19 s at
-  T=12096.
+  T=12096 (one core, an Ivy Bridge laptop).
 - In numba, a loop that branches on the model per element (one kernel for
   Bernoulli and Poisson) ran 8× slower than the same loop for one model. Each
   kernel now dispatches once to an inlined body with the model code as a
@@ -58,21 +58,22 @@ plane have no such chain. Three routes:
    Pólya trees (W. H. Wong, L. Ma, Annals of Statistics, 2010). H3 hexagonal
    cells form such a tree (7 children per cell), which fits spatial rates.
 
-## First application: Worldwatch
+## Periodic profiles
 
-Worldwatch (global anomaly detection over open data streams) models event
-counts per window with hour-of-day and day-of-week factors fixed at 24 and 7
-slots. Planned use, offline first:
+For a daily or weekly rate profile, fold the series: days (or weeks) as
+trials, time of day as the axis, the finest time slots as the candidate
+boundaries. `PoissonModel` then gives the profile with its uncertainty,
+which can feed a forecast's predictive distribution. Caveats:
 
-- daily/weekly rate profiles per stream and cell with `PoissonModel` — days as
-  trials, time of day as the peri-stimulus axis, the stream's fixed archive bins
-  as the candidate boundaries; the profile's uncertainty then feeds the
-  predictive distribution;
-- caveat: days are not independent repeats (rates drift, news days differ), so
-  the profile gives the shape, fitted on a recent window, while Worldwatch's own
-  forgetting rate and burstiness posterior keep the level;
-- later: change points in the archive, spatial resolution over the H3 tree,
-  mutual information between streams.
+- the days are treated as independent repeats of one profile; if the level
+  drifts or some days are exceptional, fit the shape on a recent window and
+  model the level separately;
+- unfolded, a periodic series needs M to grow with its length (the same shape
+  re-learnt every period; see the README's larger problems), so folding is
+  also far cheaper;
+- a bin cannot yet wrap round the end of the period (planned: cyclic
+  profiles).
 
-Success criterion before anything goes live: better calibration (PIT
-uniformity) of the count models on the archive than the fixed hourly factors.
+Other directions: change points along long series, spatial rates over a
+hierarchical grid (route 3 above), mutual information between streams (the
+2005 paper).

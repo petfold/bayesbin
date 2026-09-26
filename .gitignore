@@ -5,3 +5,7 @@ __pycache__/
 reference/binsdfc-0.1/binsdfc
 cpp/binsdfc-fb/binsdfc
 reference/binsdfc-0.1/build/
+cpp/binsdfc-fb/binsdfc_*
+cpp/binsdfc-fb/build/
+/build/
+/dist/

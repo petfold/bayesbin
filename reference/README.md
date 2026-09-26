@@ -1,7 +1,8 @@
 # binsdfc 0.1 — the original implementation
 
 Dominik Endres's command-line implementation of the NIPS 2008 paper, C++ with
-a Python 2 test-data script. GPL version 2 or later (see the file headers).
+a Python 2 test-data script. GPL version 2 or later (see the file headers;
+the licence text, which the original archive did not include, is in [COPYING](COPYING)).
 Kept here unmodified, as the reference `bayesbin` is tested against.
 
 ## Provenance
