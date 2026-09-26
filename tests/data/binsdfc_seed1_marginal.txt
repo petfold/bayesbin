@@ -1,0 +1,14 @@
+# number-of-binboundaries evidence 
+# marginal likelihood of dataset :-2387.61
+0 -2559.37
+1 -2493.75
+2 -2397.67
+3 -2390.86
+4 -2388.57
+5 -2387.49
+6 -2387.01
+7 -2386.83
+8 -2386.85
+9 -2386.99
+10 -2387.2
+# Including models with 7<=M<=7 at probability 0.196426
