@@ -32,6 +32,12 @@ By default predictions average over every M, as the paper recommends;
 `m_mass=0.9` restricts them to the credible range of M, which is what the
 original program does.
 
+NumPy and SciPy are all it needs. With numba installed (`pip install
+bayesbin[fast]`) the element-wise work runs in fused kernels, about 2× faster;
+the first call in a new environment compiles them (a few seconds, cached
+afterwards), and `BAYESBIN_NUMBA=0` switches them off. Both paths give the same
+results to rounding.
+
 ## Models
 
 | model | per interval | per-bin prior | use |
@@ -43,7 +49,7 @@ original program does.
 
 ## Verification
 
-`pytest` (28 tests; 4 need `cpp/binsdfc-fb` built):
+`pytest` (32 tests; 4 need `cpp/binsdfc-fb` built, 3 need numba):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -58,7 +64,9 @@ original program does.
   evidences with and without a virtual spike at k equals the forward–backward
   result for every k.
 - The fast paths against the exact log-space ones, on data whose evidences span
-  thousands of nats, with the underflow fallback forced.
+  thousands of nats, with the underflow fallback forced; the fused kernels
+  against the NumPy path and the exact one, for both models (constant and
+  varying exposure).
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.
 
@@ -70,8 +78,12 @@ original program does.
   backward programmes run in blocks of 256 columns, each block's slice of
   exponentiated gains made once from the upper triangle and serving all M
   steps (the rows before a block, final for every step, as one matrix
-  product; only the rows inside it step by step); the bin posterior is accumulated in tiles of 256 × 1024 bins, as
-  scaled matrix products, into the rates and the boundary posterior.
+  product; only the rows inside it step by step); the bin posterior is
+  accumulated in tiles of 256 × 1024 bins, as scaled matrix products, into the
+  rates and the boundary posterior. The factors of every matrix product are
+  flushed to 0 below a threshold chosen so that no product is subnormal
+  (subnormal arithmetic is ~100× slower on x86, and BLAS runs without
+  flush-to-zero); the error bounds count the flushed terms as lost.
   `keep_bins=True` (the whole bin posterior) and `exact=True` use T×T arrays. Wherever underflow could cost
   more than 10⁻¹³ (relative, evidences) or 10⁻¹⁴ (absolute, bin posterior),
   that entry is recomputed exactly in log space, and `exact=True` does
@@ -85,57 +97,59 @@ original program does.
 ## Speed against the original
 
 binsdfc 0.1 unmodified (`g++ -O2 -fopenmp`; its own flags `-march=native
--ffast-math` made no real difference), against bayesbin with NumPy 2.5 and
-OpenBLAS. Intel i7-3612QM (4 cores, 2 hyperthreads each); "1 core" means one
-physical core, and "4 threads" four separate physical cores. binsdfc is timed
-as a process, bayesbin in-process without the import.
+-ffast-math` made no real difference), against bayesbin with NumPy 2.5,
+OpenBLAS and numba 0.67. Intel i7-3612QM (4 cores, 2 hyperthreads each; AVX,
+no AVX2 or FMA); "1 core" means one physical core, and "4 threads" four
+separate physical cores. binsdfc is timed as a process, bayesbin in-process
+without the import and after a warm-up call (the fused kernels' cache load,
+0.25 s once per process).
 
-| case | binsdfc, 1 core | binsdfc, 4 threads | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | bayesbin, 1 core |
-|---|---|---|---|---|---|
-| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | | | 0.04 s |
-| T=600, M≤10, rate ± sd | 50.0 s | 12.4 s | 0.033 s | 0.021 s | 0.16 s |
-| T=600, M≤10, evidence only | 0.065 s | — | 0.020 s | 0.017 s | 0.073 s |
-| T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.70 s |
-| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 1.5 s |
+| case | binsdfc, 1 core | binsdfc, 4 threads | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core |
+|---|---|---|---|---|---|---|
+| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | | | 0.020 s | 0.009 s |
+| T=600, M≤10, rate ± sd | 50.0 s | 12.4 s | 0.033 s | 0.021 s | 0.059 s | 0.024 s |
+| T=600, M≤10, evidence only | 0.065 s | — | 0.020 s | 0.017 s | 0.017 s | 0.008 s |
+| T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.14 s | 0.076 s |
+| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s |
 
 `binsdfc-fb` is the original with the forward–backward SDF, the matrix-vector
 central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)); best
 of 5 runs, `OMP_NUM_THREADS` set to the cores given. (binsdfc itself always runs 4 threads.) bayesbin is no faster on 4 threads than on 1 core.
 
-- The evidences use the same dynamic programme in both, so they take about
-  the same time. At T=2016 bayesbin's matrix-vector steps are about 3× faster
-  than binsdfc's triple loop.
+- The evidences use the same dynamic programme in both. binsdfc's triple loop
+  is the slowest; binsdfc-fb and bayesbin both run its central iteration in
+  column blocks, bayesbin with the rows before each block as one matrix
+  product for all M steps (BLAS-3), which binsdfc-fb does not have.
 - For the rate and its error bars binsdfc uses the paper's virtual-spike
   device: for every time point it reruns the whole programme twice (rate and
   second moment), O(M·T³). bayesbin gets every time point from one backward
   pass, O(M·T²). The gap is the algorithm, not the language.
 - binsdfc fixes 4 OpenMP threads over time points (`omp_set_num_threads(4)`)
-  and scales almost 4×. bayesbin gains nothing from threads: its remaining time
-  is single-threaded element-wise work on T×T arrays (the bin evidences, the
-  gain matrix, the moments), not the matrix products.
+  and scales almost 4×. bayesbin runs on one thread outside BLAS: its matrix
+  products are only part of the time, the rest is element-wise work (bin
+  evidences, exps, moments) in the fused kernels or in NumPy.
 
 ### Larger problems
 
 30 trials of a synthetic daily profile (5-minute slots: night, morning ramp,
 day, evening peak, plus a 2-hour burst each week), rate ± sd, most probable M
-only, peak memory from `/usr/bin/time`. binsdfc-fb as of the lean-memory
-version; the laptop was thermally throttled for these runs (a back-to-back
-check put the previous build about 2× slower than in its own earlier runs too).
+only (`-l 0`, `m_mass=0.0`), peak memory from `/usr/bin/time` and
+`getrusage`. All but the 12-week row run back to back, one run each; the
+laptop was thermally throttled (about 2.3 GHz).
 
-| T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin, 1 core |
-|---|---|---|---|---|---|
-| 2016 (1 week) | 30 | 0.27 s | 0.09 s | 12 MB | 0.50 s, 89 MB |
-| 4032 (2 weeks) | 60 | | | | 1.95 s, 111 MB |
-| 4032 | 120 | 2.4 s | 0.89 s | 25 MB | |
-| 8064 (4 weeks) | 120 | 9.5 s | 3.0 s | 44 MB | 12.2 s, 179 MB |
-| 12096 (6 weeks) | 120 | 20.4 s | 6.4 s | 61 MB | 29.6 s, 246 MB |
-| 24192 (12 weeks) | 120 | | 86 s | 116 MB | |
+| T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core |
+|---|---|---|---|---|---|---|
+| 2016 (1 week) | 30 | 0.25 s | 0.11 s | 12 MB | 0.55 s, 87 MB | 0.27 s, 176 MB |
+| 4032 (2 weeks) | 60 | 1.40 s | 0.46 s | 19 MB | 2.04 s, 110 MB | 1.12 s, 194 MB |
+| 8064 (4 weeks) | 120 | 9.3 s | 2.9 s | 44 MB | 8.5 s, 184 MB | 5.4 s, 234 MB |
+| 12096 (6 weeks) | 120 | 20.5 s | 6.5 s | 61 MB | 18.6 s, 249 MB | 12.3 s, 271 MB |
+| 24192 (12 weeks) | 120 | | 86 s | 116 MB | | |
 
 - binsdfc-fb memory is O(T·M): no T×T array is kept. (Before: ≈14·T²
   bytes, 2.1 GB at 6 weeks; 12 weeks would have needed ≈8 GB.) Output is
   byte-identical to the T² version at 2 and 6 weeks. bayesbin is O(T·M) too
-  now (its figures include ≈60 MB of Python and NumPy); before, ≈70·T² bytes
-  (1.1 GB at 2 weeks).
+  now (its figures include ≈60 MB of Python and NumPy, and ≈90 MB more for
+  numba and LLVM); before, ≈70·T² bytes (1.1 GB at 2 weeks).
 - Time grows about as T² and linearly in M; the original needs 8.5 s for the
   evidences alone at T=4032.
 - binsdfc-fb and bayesbin agree to the 6 printed digits at T=4032.

@@ -26,6 +26,7 @@ All arithmetic is in log space.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -33,7 +34,30 @@ import numpy as np
 from scipy.special import gammaln, logsumexp
 
 _NEG_INF = -np.inf
+
+# optional fused kernels (numba): BAYESBIN_NUMBA=0 switches them off
+_FAST = None
+if os.environ.get("BAYESBIN_NUMBA", "1") != "0":
+    try:
+        from bayesbin import _fast as _FAST
+    except ImportError:  # numba not installed: the NumPy path
+        _FAST = None
 _TINY = np.finfo(float).tiny  # smallest normal double: below it a term is lost or imprecise
+# factors below √TINY are flushed to 0 before a matrix product, so that no product of two kept
+# ones is subnormal (subnormal arithmetic is ~100× slower on x86); the bounds count them as lost
+_FLUSH = float(np.sqrt(_TINY))
+_LOG_FLUSH = float(np.log(_FLUSH))
+# the bin posterior's factors instead: flushed below 2^-1011 (lost terms 2^11 TINY at most, not
+# √TINY) and scaled by 2^500 (exact), so a kept product is >= 2^-1022 and a sum < K·2^1000
+_CUT, _UP = 2.0**-1011, 2.0**500
+
+
+def _scaled_factor(X: np.ndarray) -> np.ndarray:
+    """exp(X), flushed to 0 below _CUT and scaled by _UP, in place."""
+    np.exp(X, out=X)
+    np.putmask(X, X < _CUT, 0.0)
+    X *= _UP
+    return X
 
 
 def _log_binom(n: int, k: int) -> float:
@@ -160,6 +184,13 @@ class BernoulliModel:
         _mask_below(m2, a0, b0, 0.0)
         return L, m1, m2
 
+    def _kernel(self):
+        """(params, shape) for the fused kernels (bayesbin._fast), or None (non-integer data)."""
+        cs, cg, tA, tB, tC, kAC, kA, kC = self._pre
+        if cs.dtype.kind != "i" or cg.dtype.kind != "i":
+            return None
+        return (0, cs, cg, tA.v, tB.v, tC.v, float(kAC), float(kA), float(kC), 0.0), (self.sigma, self.gamma)
+
     def log_bin_evidence(self) -> np.ndarray:
         """The whole T×T matrix of bin_block (-inf below the diagonal)."""
         return self.bin_block(0, self.T, 0, self.T)
@@ -244,6 +275,17 @@ class PoissonModel:
         _mask_below(m2, a0, b0, 0.0)
         return L, m1, m2
 
+    def _kernel(self):
+        """(params, shape) for the fused kernels (bayesbin._fast), or None (non-integer data)."""
+        cy, ce, e0, logE, tY, k0 = self._pre
+        if cy.dtype.kind != "i":
+            return None
+        dummy = np.zeros(1)
+        return ((1 if e0 is not None else 2, cy, dummy if ce is None else ce, tY.v,
+                 dummy if logE is None else logE, dummy, float(k0), 0.0 if e0 is None else float(e0),
+                 float(self.alpha), float(self.beta)),
+                (self.alpha, self.beta))
+
     def log_bin_evidence(self) -> np.ndarray:
         """The whole T×T matrix of bin_block (-inf below the diagonal)."""
         return self.bin_block(0, self.T, 0, self.T)
@@ -298,12 +340,18 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
     before the block are final for every m, so their contributions to all M
     steps are one matrix product (BLAS-3: the slice is read once, not M times);
     only the rows inside the block go step by step. Each part is scaled by its
-    own maximum (consistent within each column's sum). A term lost to underflow is below the smallest normal
-    double, so a column whose sum is not far above T·TINY could be off by more
-    than `tol` (relative); those columns are recomputed exactly.
+    own maximum (consistent within each column's sum). Factors below √TINY are
+    flushed to 0, so no product is subnormal (slow): a lost term is below √TINY
+    relative to its part's scale, so a column whose sum is not far above T·√TINY
+    could be off by more than `tol` (relative); those columns are recomputed
+    exactly.
 
     `ev` is a T×T array of bin evidences or a model (its bin_block is used: no
     T×T array at all)."""
+    if _blk is None and _FAST is not None and not isinstance(ev, np.ndarray):
+        kern = ev._kernel()
+        if kern is not None:
+            return _forward_fused(kern[0], ev.T, max_m, False, tol=tol)
     T, blk = _blocks(ev) if _blk is None else _blk
     if block is None:
         block = 256  # measured best for NumPy between T = 2016 and 8064 (narrower: call overhead)
@@ -314,7 +362,7 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
         return fwd
     phi = np.full((max_m + 1, T), _NEG_INF)
     phi[0] = 0.0
-    floor = 2 * T * _TINY / tol
+    floor = 2 * T * _FLUSH / tol
     for k0 in range(0, T, block):
         k1 = min(T, k0 + block)
         nr = k1 - 1  # rows r = 0..k1-2 reach this block
@@ -328,6 +376,7 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
         c[~reach] = 0.0
         E = np.subtract(G, c)
         np.exp(E, out=E)
+        np.putmask(E, E < _FLUSH, 0.0)  # no subnormal products (see _FLUSH)
         ks = np.arange(k0, k1)
         # rows before the block (r < k0) are final for every m: their contributions to all M
         # steps are one matrix product, each step m scaled by its own maximum q[m]
@@ -338,6 +387,7 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
             q[~qfin] = 0.0
             X = np.subtract(Pb, q[:, None])
             np.exp(X, out=X)
+            np.putmask(X, X < _FLUSH, 0.0)
             before = X @ E[:k0]  # (max_m, width): row m-1 = sum_{r<k0} exp(phi_{m-1}[r] - q) E[r]
         for m in range(1, max_m + 1):
             # rows inside the block (k0 <= r < k1-1): sequential in m, at most block - 1 of them
@@ -353,6 +403,7 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
             if p_in != _NEG_INF:
                 v = np.subtract(prev_in, p)
                 np.exp(v, out=v)
+                np.putmask(v, v < _FLUSH, 0.0)
                 sums += v @ E[k0:nr]
             with np.errstate(divide="ignore"):
                 new = np.log(sums)
@@ -370,6 +421,36 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
     return fwd
 
 
+def _forward_fused(params, T: int, max_m: int, reverse: bool, *, tol: float = 1e-13,
+                   block: int = 256) -> np.ndarray:
+    """_forward with the element-wise work in fused kernels (bayesbin._fast): the gain
+    slice, its column maxima and its flushed exps; the scaled rows before a block; the
+    steps inside each block in one loop. The matrix product of the rows before a block
+    stays in BLAS."""
+    fwd = np.full((max_m + 1, T), _NEG_INF)
+    b = _FAST.base(*params, T, reverse)
+    fwd[0] = b
+    if max_m == 0 or T == 1:
+        return fwd
+    phi = np.full((max_m + 1, T), _NEG_INF)
+    phi[0] = 0.0
+    floor = 2 * T * _FLUSH / tol
+    for c0 in range(0, T, block):
+        c1 = min(T, c0 + block)
+        if c1 - 1 <= 0:
+            continue
+        E, c, reach = _FAST.gain_slice(*params, T, reverse, b, c0, c1, _LOG_FLUSH)
+        if c0 > 0:
+            X, q, qfin = _FAST.scaled_rows(phi, max_m, c0, _LOG_FLUSH)
+            before = X @ E[:c0]
+        else:
+            before, q, qfin = np.zeros((max_m, c1 - c0)), np.zeros(max_m), np.zeros(max_m, bool)
+        _FAST.block_steps(*params, T, reverse, b, phi, E, before, q, qfin, c, reach, c0, c1, floor,
+                          _LOG_FLUSH)
+    fwd[1:] = b[None, :] + phi[1:]
+    return fwd
+
+
 def _backward(ev, max_m: int, *, exact: bool = False) -> np.ndarray:
     """bwd[j, k]: log evidence of intervals k+1..T-1 as j+1 bins (k < T-1): the
     forward programme on the reversed sequence. `ev`: a T×T array or a model
@@ -379,7 +460,11 @@ def _backward(ev, max_m: int, *, exact: bool = False) -> np.ndarray:
         f = _forward_exact(ev[::-1, ::-1].T, max_m)  # L_rev[a, b] = L[T-1-b, T-1-a]
     else:
         T, blk = _blocks(ev)
-        f = _forward(None, max_m, _blk=(T, _reversed_blocks(T, blk)))
+        kern = None if (_FAST is None or isinstance(ev, np.ndarray)) else ev._kernel()
+        if kern is not None:
+            f = _forward_fused(kern[0], T, max_m, True)
+        else:
+            f = _forward(None, max_m, _blk=(T, _reversed_blocks(T, blk)))
     bwd = np.full((max_m + 1, T), _NEG_INF)
     bwd[:, :-1] = f[:, T - 2::-1]  # bwd[j, k] = f[j, T-2-k]
     return bwd
@@ -425,6 +510,8 @@ def _fold_models(log_c: np.ndarray, right: np.ndarray) -> np.ndarray:
     rows i = 0..M the messages right_{M-i}, i.e. rows M..0 reversed: one exact
     log-add-exp per model, O(K·T) memory. (A single scaled matrix product loses too
     much to underflow here: rows i near K reach only small j.)"""
+    if _FAST is not None:
+        return _FAST.fold_models(log_c, right)
     K, T = right.shape
     R = np.full((K, T), _NEG_INF)
     for M in np.flatnonzero(np.isfinite(log_c)):
@@ -496,16 +583,32 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
     (tile_a bin starts) × (tile_b bin ends); entries where underflow could cost
     more than `tol` are recomputed in log space. Each tile adds its W·E[f | bin]
     over the bins' ranges a..b through difference arrays: its row sums at a, its
-    column sums (negated) at b + 1."""
+    column sums (negated) at b + 1. The factors of the products are flushed and
+    scaled so that no product is subnormal (see _CUT): a lost term is < 2^-1011,
+    and the risk test counts it."""
     T, K = model.T, len(log_c)
     left, right = _messages(fwd, bwd, K)
     R = _fold_models(log_c, right)
     ma, mb = left.max(axis=0), R.max(axis=0)
     ma[~np.isfinite(ma)] = 0.0
     mb[~np.isfinite(mb)] = 0.0
-    A, B = np.exp(left - ma).T, np.exp(R - mb)  # (T, K), (K, T)
+    A = _scaled_factor(np.subtract(left, ma)).T  # (T, K); products carry _UP²
+    B = _scaled_factor(np.subtract(R, mb))  # (K, T)
     d1, d2, ends = np.zeros(T + 1), np.zeros(T + 1), np.zeros(T)
-    log_risk = np.log(K * _TINY) - np.log(max(tol, _TINY))
+    log_risk = np.log(K * _CUT) - np.log(max(tol, _TINY))
+    kern = model._kernel() if _FAST is not None else None
+    if kern is not None:  # the tile's element-wise work in one fused pass
+        params, (sh0, sh1) = kern
+        left_c, R_c = np.ascontiguousarray(left), np.ascontiguousarray(R)
+        for a0 in range(0, T, tile_a):
+            a1 = min(T, a0 + tile_a)
+            for b0 in range(a0, T, tile_b):
+                b1 = min(T, b0 + tile_b)
+                C = A[a0:a1] @ B[:, b0:b1]
+                _FAST.tile_accumulate(*params, float(sh0), float(sh1), C, 1.0 / _UP**2, a0, b0,
+                                      ma, mb, left_c, R_c, log_risk, d1, d2, ends)
+        return np.cumsum(d1)[:T], np.cumsum(d2)[:T], ends[:T - 1]
+    log_up2 = 2 * np.log(_UP)
     for a0 in range(0, T, tile_a):
         a1 = min(T, a0 + tile_a)
         for b0 in range(a0, T, tile_b):
@@ -514,6 +617,7 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
             C = A[a0:a1] @ B[:, b0:b1]
             with np.errstate(divide="ignore"):
                 np.log(C, out=C)
+            C -= log_up2
             C += ma[a0:a1, None]
             C += mb[None, b0:b1]
             # entries where underflow could cost more than tol: the scalar bound first, the

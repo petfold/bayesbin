@@ -5,7 +5,9 @@
 
 Each case is timed 3 times; the median is shown. binsdfc is timed as a whole
 process (reading its input included); bayesbin in-process (numpy/scipy import
-excluded, reading the input included).
+excluded, reading the input included); with the fused kernels if numba is
+installed (BAYESBIN_NUMBA=0 for the NumPy path; the first call compiles or
+loads them, so a warm-up fit runs first).
 """
 
 from __future__ import annotations
@@ -43,8 +45,7 @@ def _load(path, t0, t1):
 def _evidence_only(path, t0, t1, m):
     s, g = _load(path, t0, t1)
     model = BernoulliModel(s, g)
-    L = model.log_bin_evidence()
-    fwd = _forward(L, m)
+    fwd = _forward(model, m)
     return [fwd[k, -1] - _log_binom(len(s) - 1, k) for k in range(m + 1)]
 
 
@@ -72,6 +73,7 @@ def main() -> None:
             ("T=2016 M<=30 rate+sd, best M", a.long, 0, 2015, 30, "v", 0.0),
             ("T=2016 M<=30 rate+sd, 90% M", a.long, 0, 2015, 30, "v", 0.9),
         ]
+    _sdf(seed1, -100, -37, 2, None)  # warm-up: the fused kernels' compile or cache load
     names = [Path(b).name for b in a.binsdfc]
     print(f"{'case':32s}" + "".join(f"{n:>16s}" for n in names) + f"{'bayesbin':>12s}", flush=True)
     for label, data, t0, t1, m, what, mass in cases:

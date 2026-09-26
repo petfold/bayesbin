@@ -20,7 +20,25 @@
 - **binsdfc 0.1** (C++, GPL-2+), D. Endres — found, in [reference/](../reference/),
   with provenance. Builds with a current g++; reproduces its documented tutorial.
 - **Matlab** — reported to exist; not located yet.
-- **bayesbin** (this repository) — NumPy/SciPy, written from the paper.
+- **bayesbin** (this repository) — NumPy/SciPy, written from the paper;
+  optional numba kernels for the element-wise work.
+
+## Performance lessons (bayesbin)
+
+- Subnormals were the largest hidden cost. The scaled matrix products (forward
+  steps, bin posterior) had a few percent subnormal factors, and products of
+  two small normal factors underflow too; with no flush-to-zero in OpenBLAS the
+  products ran at a third to a quarter of their speed. Flushing factors below
+  √TINY (forward) or below 2^-1011 after an exact 2^500 scaling (bin posterior,
+  whose error bound needed the tighter cut) removes them; the bounds count the
+  flushed terms as lost. That alone took the NumPy path from 30 s to 19 s at
+  T=12096.
+- In numba, a loop that branches on the model per element (one kernel for
+  Bernoulli and Poisson) ran 8× slower than the same loop for one model. Each
+  kernel now dispatches once to an inlined body with the model code as a
+  constant.
+- Without SVML (numba) or AVX-512 (NumPy), exp is scalar, about 12 ns on this
+  laptop: it and the lgamma table lookups set the floor of the element-wise work.
 
 ## Where the method stops being 1-D
 

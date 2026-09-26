@@ -300,9 +300,11 @@ def test_block_wise_fit_equals_the_exact_full_matrix_fit(mass):
         np.testing.assert_allclose(blocks.boundary_posterior, ref.boundary_posterior, atol=1e-12)
 
 
-def test_forward_backward_from_a_model_equal_those_from_its_matrix():
+def test_forward_backward_from_a_model_equal_those_from_its_matrix(monkeypatch):
+    import bayesbin.core as core
     from bayesbin.core import _backward, _forward
 
+    monkeypatch.setattr(core, "_FAST", None)  # the NumPy path, bit for bit (the fused one: below)
     for model in (_strong_poisson(T=300), BernoulliModel(*_seed1())):
         L = model.log_bin_evidence()
         np.testing.assert_array_equal(_forward(model, 10), _forward(L, 10))
@@ -338,3 +340,57 @@ def test_folding_the_models_as_one_matrix_product_equals_the_loop():
         fin = np.isfinite(ref)
         np.testing.assert_array_equal(np.isfinite(got), fin)
         np.testing.assert_allclose(got[fin], ref[fin], rtol=1e-15, atol=1e-12)
+
+
+# --- the fused kernels (optional, numba) against the NumPy path --------------------------
+
+
+def _models_for_kernels():
+    rng = np.random.default_rng(21)
+    e = rng.uniform(0.5, 2.0, 500)
+    return [
+        BernoulliModel(*_seed1()),
+        _strong_poisson(),  # unit exposure
+        PoissonModel.weak_prior(rng.poisson(np.repeat([2.0, 20.0, 5.0], 150)).astype(float), np.full(450, 0.5)),
+        PoissonModel.weak_prior(rng.poisson(3.0 * e).astype(float), e),  # varying exposure
+    ]
+
+
+@pytest.mark.parametrize("mass", [None, 0.9])
+def test_fused_kernels_equal_the_numpy_path(mass, monkeypatch):
+    pytest.importorskip("numba")
+    import bayesbin.core as core
+
+    if core._FAST is None:
+        pytest.skip("fused kernels switched off (BAYESBIN_NUMBA=0)")
+    fused = [fit(m, 12, m_mass=mass) for m in _models_for_kernels()]
+    monkeypatch.setattr(core, "_FAST", None)
+    plain = [fit(m, 12, m_mass=mass) for m in _models_for_kernels()]
+    # the sums inside a block run in another order: the forward log evidences (up to ~2e5 for
+    # the strong Poisson data, an ulp of 3e-11) differ by an ulp, and the rates by that much
+    for f, p in zip(fused, plain):
+        np.testing.assert_allclose(f.log_evidence, p.log_evidence, rtol=1e-13)
+        np.testing.assert_allclose(f.rate, p.rate, rtol=1e-9)
+        np.testing.assert_allclose(f.rate_std, p.rate_std, rtol=1e-6)
+        np.testing.assert_allclose(f.boundary_posterior, p.boundary_posterior, atol=1e-12)
+
+
+def test_fused_kernels_equal_the_exact_path():
+    pytest.importorskip("numba")
+    import bayesbin.core as core
+
+    if core._FAST is None:
+        pytest.skip("fused kernels switched off (BAYESBIN_NUMBA=0)")
+    for model in _models_for_kernels():
+        got, ref = fit(model, 12), fit(model, 12, exact=True)
+        np.testing.assert_allclose(got.log_evidence, ref.log_evidence, rtol=1e-13)
+        np.testing.assert_allclose(got.rate, ref.rate, rtol=1e-9)
+        np.testing.assert_allclose(got.boundary_posterior, ref.boundary_posterior, atol=1e-12)
+
+
+def test_non_integer_data_take_the_numpy_path():
+    rng = np.random.default_rng(22)
+    model = PoissonModel.weak_prior(rng.uniform(0, 5, 200))
+    assert model._kernel() is None
+    ref = fit(model, 8, exact=True)
+    np.testing.assert_allclose(fit(model, 8).rate, ref.rate, rtol=1e-10)
