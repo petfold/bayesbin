@@ -16,6 +16,7 @@
 #include <cfloat>
 #include <limits>
 #include <algorithm>
+#include <memory>
 
 namespace fb {
 
@@ -59,20 +60,34 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 	fwd[0] = b;
 	if (mmax == 0 || K == 1) return;
 
-	// E[r*K+k] = exp(G[r][k] - c[k]) for r < k
-	vector<double> E((size_t)K * K, 0.0), c(K, NEG);
-	#pragma omp parallel for schedule(guided)
-	for (int k = 1; k < K; k++) {
-		double mx = NEG;
-		for (int r = 0; r < k; r++) {
-			const double g = iec(r + 1, k) - b[k] + b[r];
-			E[(size_t)r * K + k] = g;
-			mx = fmax(mx, g);
+	// E(r,k) = exp(G[r][k] - c[k]) for r < k, packed row by row (upper triangle, no zero fill):
+	// row r holds k = r+1..K-1 at off(r) = r*(2K-r-1)/2
+	const size_t n = (size_t)K * (K - 1) / 2;
+	std::unique_ptr<double[]> E(new double[n]);
+	auto off = [K](int r) -> size_t { return (size_t)r * (2 * (size_t)K - r - 1) / 2; };
+	vector<double> c(K, NEG);
+	#pragma omp parallel
+	{
+		vector<double> cl(K, NEG);  // this thread's column maxima
+		#pragma omp for schedule(guided)
+		for (int r = 0; r < K - 1; r++) {
+			double *row = E.get() + off(r) - (r + 1);  // row[k], k > r
+			for (int k = r + 1; k < K; k++) {
+				const double g = iec(r + 1, k) - b[k] + b[r];
+				row[k] = g;
+				cl[k] = fmax(cl[k], g);
+			}
 		}
-		c[k] = mx == NEG ? 0.0 : mx;
-		for (int r = 0; r < k; r++) E[(size_t)r * K + k] = exp(E[(size_t)r * K + k] - c[k]);
+		#pragma omp critical
+		for (int k = 0; k < K; k++) c[k] = fmax(c[k], cl[k]);
+		#pragma omp barrier
+		#pragma omp for schedule(guided)
+		for (int r = 0; r < K - 1; r++) {
+			double *row = E.get() + off(r) - (r + 1);
+			for (int k = r + 1; k < K; k++) row[k] = exp(row[k] - (c[k] == NEG ? 0.0 : c[k]));
+		}
 	}
-	c[0] = 0.0;
+	for (int k = 0; k < K; k++) if (c[k] == NEG) c[k] = 0.0;
 
 	const double floor = 2.0 * K * DBL_MIN / tol;
 	const int BLOCK = 256;
@@ -89,7 +104,7 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 			for (int r = 0; r < k1 - 1; r++) {
 				const double vr = v[r];
 				if (vr == 0.0) continue;
-				const double *row = &E[(size_t)r * K];
+				const double *row = E.get() + off(r) - (r + 1);
 				for (int k = std::max(r + 1, k0); k < k1; k++) sums[k] += vr * row[k];
 			}
 		}
@@ -105,6 +120,15 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 		for (int k = 0; k < K; k++) fwd[m][k] = b[k] + phi[k];
 	}
 }
+
+/** the last central iteration of the plain evidences, for reuse by forwardBackward:
+    valid while spikeCounter::mDataVersion == version */
+struct ForwardCache {
+	unsigned long version = 0;
+	int K = -1, mmax = -1;
+	std::vector<std::vector<double> > fwd;
+};
+extern ForwardCache cache;
 
 }  // namespace fb
 

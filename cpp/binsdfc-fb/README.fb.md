@@ -12,7 +12,8 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
     exp(G − column max) is computed once: T²/2 multiply-adds per step, no exp
     or log in the inner loop. A term lost to underflow is below DBL_MIN, so any
     column whose sum could be off by more than 1e-13 (relative) is recomputed
-    exactly with a log-sum-exp.
+    exactly with a log-sum-exp. The gain matrix is stored as a packed upper
+    triangle, filled row by row.
   - `forwardBackward`: the SDF and its second moment at every time index in one
     pass, O(M·T²). The original obtains each time index as a ratio of evidences
     with a virtual spike added there (section 4 of the paper), one run of the
@@ -20,7 +21,14 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
     the forward iteration on the reversed time axis; the average over M is
     folded into them; the sum over a bin's index is a scaled product, with the
     same bound (1e-14 absolute per bin probability) and exact recomputation.
+    Reuses the evidences' forward iteration when the data are unchanged.
     OpenMP throughout.
+- `spikecounter.h/.cpp`: the bin evidences log B(s+σ, g+γ) from `lgamma`
+  tables indexed by the integer counts, and the counts from prefix sums, so no
+  `lgamma` per bin and every row in parallel (0.19 s → 0.014 s at T=2016);
+  the (unused) spike-pair co-occurrence counts from the spiking positions,
+  O(spikes²) per trial instead of O(T²); `mDataVersion`, so the central
+  iteration of the evidences can be reused by the SDF.
 - `evidencecomputer.cpp`: `evidenceComputer<evifunc>::computeEvidences`
   (the plain evidences) uses `fb::fastForward` with the plain Beta prior; the
   original table-lookup iteration otherwise.

@@ -1,3 +1,5 @@
+// Modified 2026-09-26: bin evidences from lgamma tables and prefix sums; co-occurrence counts
+// from spike positions (see README.fb.md). The original code runs with --virtual-spike.
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *
@@ -20,6 +22,8 @@
 #ifndef SPIKECOUNTER_CPP
 #define SPIKECOUNTER_CPP
 #include "spikecounter.h"
+#include "forwardbackward.h"
+#include <cmath>
 #include <iostream>
 #include "time.h"
 #include "stdlib.h"
@@ -148,6 +152,12 @@ void spikeCounter::addData(vector<int>::iterator begin,vector<int>::iterator end
 			
 	}
 	
+	if(fb::enabled) {  // the same counts, from the positions that spiked: O(spikes^2), not O(T^2)
+		vector<int> idx;
+		for(i=0;i<(int)mCurSp.size();i++) if(mCurSp[i]) idx.push_back(i);
+		for(unsigned p=0;p<idx.size();p++)
+			for(unsigned q=0;q<p;q++) mAutoCorr[idx[p]][idx[q]]++;
+	} else
 	for(i=0;i<mCurSp.size();i++)
 		for(j=0;j<i;j++)
 			if(mCurSp[i] && mCurSp[j]) mAutoCorr[i][j]++;
@@ -166,6 +176,31 @@ void spikeCounter::precomputeSubIntervals()
 	int i,j,cs;
 	if(!mbDataChanged) return;
 	allocArrays();
+	mDataVersion++;
+	if(fb::enabled && mPUB==1.0) {
+		// counts from prefix sums and log Beta(s+prior1, g+prior0) from lgamma tables indexed by the
+		// integer counts: no lgamma per bin, and every row independent (in parallel)
+		const int K=mIntervalCounts.size();
+		vector<int> c1(K+1,0),c0(K+1,0);
+		for(i=0;i<K;i++) { c1[i+1]=c1[i]+mSpikeTrain[i].first; c0[i+1]=c0[i]+mSpikeTrain[i].second; }
+		const int S=c1[K],G=c0[K];
+		vector<double> lA(S+1),lB(G+1),lC(S+G+1);  // lgamma is not thread-safe (signgam): build here
+		for(int s=0;s<=S;s++) lA[s]=lgamma(s+mPrior1);
+		for(int g=0;g<=G;g++) lB[g]=lgamma(g+mPrior0);
+		for(int n=0;n<=S+G;n++) lC[n]=lgamma(n+mPrior1+mPrior0);
+		#pragma omp parallel for schedule(guided)
+		for(int a=0;a<K;a++) {
+			const int len=mIntervalCounts[a].size();
+			for(int jj=0;jj<len;jj++) {
+				const int s=c1[a+jj+1]-c1[a],g=c0[a+jj+1]-c0[a];
+				mIntervalCounts[a][jj].first=s;
+				mIntervalCounts[a][jj].second=g;
+				mIntervalEvidences[a][jj]=lA[s]+lB[g]-lC[s+g];
+			}
+		}
+		mbDataChanged=false;
+		return;
+	}
 	for(i=mIntervalCounts.size()-1;i>=0;i--) {
 		mIntervalCounts[i][0]=mSpikeTrain[i];
 		if(mPUB==1.0) mIntervalEvidences[i][0]=logAddInstance.getBeta(mIntervalCounts[i][0].first+mPrior1,mIntervalCounts[i][0].second+mPrior0);
@@ -257,6 +292,7 @@ void spikeCounter::test(double pfire0,double pfire1,double pfire3,int numtrains)
 vector<vector<double> > spikeCounter::mIntervalEvidences;
 vector<vector<pair<int,int> > > spikeCounter::mIntervalCounts;
 vector<double> spikeCounter::mPriors;
+unsigned long spikeCounter::mDataVersion=0;
 double spikeCounter::mPrior1,spikeCounter::mPrior0;
 int spikeCounter::mIntervStart,spikeCounter::mIntervEnd;
 int spikeCounter::mMMax;

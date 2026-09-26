@@ -13,6 +13,7 @@
 using namespace std;
 
 bool fb::enabled = true;
+fb::ForwardCache fb::cache;
 using fb::NEG;
 using fb::logSumExp;
 
@@ -39,8 +40,12 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	auto IEC = [this](int a, int b) -> double { return mIntervalEvidences[a][b - a]; };
 
 	// forward: fwd[m][k] = log evidence of 0..k as m+1 bins, the last ending at k
+	// (the plain evidences already ran it for these data: reuse)
 	vector<vector<double> > fwd;
-	fb::fastForward(K, m2, IEC, fwd);
+	if (fb::cache.version == mDataVersion && fb::cache.K == K && fb::cache.mmax >= m2)
+		fwd.assign(fb::cache.fwd.begin(), fb::cache.fwd.begin() + m2 + 1);
+	else
+		fb::fastForward(K, m2, IEC, fwd);
 
 	// backward, as the forward iteration on the reversed time axis:
 	// bwd[j][k] = log evidence of k+1..K-1 as j+1 bins = rev[j][K-2-k]

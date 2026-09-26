@@ -1,3 +1,4 @@
+// Modified 2026-09-26: mDataVersion (see README.fb.md).
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *
@@ -101,6 +102,9 @@ protected:
     static bool mbDataChanged;
     /** upper bound on firing prob. */
     static double mPUB;
+    /** incremented whenever the sub-interval counts/evidences are recomputed (added 2026-09-26: lets
+        forwardBackward reuse the central iteration of the evidences) */
+    static unsigned long mDataVersion;
     
 protected:
     /** allocate storage for mIntervalEvidences and mIntervalCounts */

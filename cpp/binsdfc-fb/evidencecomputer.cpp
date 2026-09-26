@@ -174,6 +174,10 @@ void evidenceComputer<evifunc>::computeEvidences()
 		fb::fastForward(K,mMMax,[this](int a,int b){return mIntervalEvidences[a][b-a];},fwd);
 		for(int m=0;m<=mMMax;m++) mEvidences[m]=fwd[m][K-1]+mPriors[m];
 		mSubEvidences=fwd[mMMax];
+		fb::cache.version=mDataVersion;
+		fb::cache.K=K;
+		fb::cache.mmax=mMMax;
+		fb::cache.fwd.swap(fwd);
 		return;
 	}
 	int k,kk,m,lb;
