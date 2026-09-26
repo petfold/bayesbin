@@ -43,7 +43,7 @@ original program does.
 
 ## Verification
 
-`pytest` (21 tests; 3 need `cpp/binsdfc-fb` built):
+`pytest` (27 tests; 4 need `cpp/binsdfc-fb` built):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
