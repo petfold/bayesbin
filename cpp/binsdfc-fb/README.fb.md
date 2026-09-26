@@ -13,7 +13,14 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
     or log in the inner loop. A term lost to underflow is below DBL_MIN, so any
     column whose sum could be off by more than 1e-13 (relative) is recomputed
     exactly with a log-sum-exp. The gain matrix is stored as a packed upper
-    triangle, filled row by row.
+    triangle; now stored block-major instead: for each block of 64
+    columns its rows are contiguous and padded (zeros where k ≤ r), built in
+    64×64 tiles (cache-friendly whether the bin evidences are read along rows
+    or, for the reversed pass, along columns). The steps loop over column
+    blocks outside and over m inside: block [k0,k1) at step m needs φ_{m-1}
+    only for r < k1, which is final, so a block stays in cache for all m
+    instead of the whole matrix streaming from memory once per m; the scale
+    is a per-block running maximum (consistent within each column).
   - `forwardBackward`: the SDF and its second moment at every time index in one
     pass, O(M·T²). The original obtains each time index as a ratio of evidences
     with a virtual spike added there (section 4 of the paper), one run of the
@@ -38,10 +45,16 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
   (the plain evidences) uses `fb::fastForward` with the plain Beta prior; the
   original table-lookup iteration otherwise.
 - `spikedensityfunction.h/.cpp`: `getSDFForwardBackward()`.
-- `binsdfc.cpp`: the SDF uses it by default. `--virtual-spike` / `-V` switches
+- `binsdfc.cpp`: the SDF uses it by default, on `OMP_NUM_THREADS` threads (else all);
+  the original's fixed `omp_set_num_threads(4)` now applies to the `-V` path only. `--virtual-spike` / `-V` switches
   every new path off, so the output is the original's, bit for bit. Output
   format unchanged.
 - `vmath.cpp` (new): the vectorised `exp`, alone compiled with `-ffast-math`.
+  Below −700 it returns exactly 0 (libmvec leaves its fast path for large
+  negative arguments), so the underflow bounds use LOST = 1e-304 per dropped
+  term instead of DBL_MIN. The hot loops run with flush-to-zero /
+  denormals-are-zero per thread (`fb::FlushDenormals`): subnormal products are
+  below that bound, and slow on x86.
 - `CMakeLists.txt`: the new source files; `-ffast-math` off globally (see Build).
 
 With the upper bound on the firing probability (the incomplete-Beta prior) the

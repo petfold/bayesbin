@@ -534,9 +534,10 @@ int main(int argc, char *argv[])
 		double stime=omp_get_wtime();
 		vector<double> sdfval(end-start,0.0);
 		vector<double> sdfstdval(end-start,0.0);
-		omp_set_num_threads(4);
-		// forward-backward: every time index in one pass; the original per-index path with -V
+		// forward-backward: every time index in one pass (threads: OMP_NUM_THREADS, else all);
+		// the original per-index path with -V, on the original's 4 threads
 		if(virtualSpike || !sdf.getSDFForwardBackward(sdfval,sdfstdval,doSdfVar)) {
+		omp_set_num_threads(4);
 		#pragma omp parallel 
 		{
 			spikeDensityFunction mysdf=sdf;

@@ -110,13 +110,14 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	}
 
 	// bins, row by row: W[a,b] = (sum_i A[a,i] Bt[i,b]) * exp(ma[a] + mb[b] + IEC(a,b)). Every term the
-	// scaled sum loses is < DBL_MIN, so W is off by at most NI*DBL_MIN*exp(ma+mb+IEC): where that could
+	// scaled sum loses is < LOST, so W is off by at most NI*LOST*exp(ma+mb+IEC): where that could
 	// exceed 1e-14, the entry is redone exactly (a separate scalar pass over the flagged b).
-	const double logRisk = log(NI * DBL_MIN) - log(1e-14);
+	const double logRisk = log(NI * fb::LOST) - log(1e-14);
 	const int nthreads = omp_get_max_threads();
 	vector<vector<double> > d1(nthreads, vector<double>(K + 1, 0.0)), d2(nthreads, vector<double>(K + 1, 0.0));
 	#pragma omp parallel
 	{
+		fb::FlushDenormals ftz;
 		const int tid = omp_get_thread_num();
 		vector<double> W(K), sh(K), m1(K), m2(K), q1(K), q2(K), buf(NI);
 		vector<int> risky;

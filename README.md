@@ -87,14 +87,14 @@ as a process, bayesbin in-process without the import.
 | case | binsdfc, 1 core | binsdfc, 4 threads | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | bayesbin, 1 core |
 |---|---|---|---|---|---|
 | T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | | | 0.04 s |
-| T=600, M≤10, rate ± sd | 50.0 s | 12.5 s | 0.031 s | 0.024 s | 0.15 s |
-| T=600, M≤10, evidence only | 0.07 s | — | 0.022 s | 0.017 s | 0.07 s |
-| T=2016, M≤30, evidence only | 2.0 s | — | 0.17 s | 0.10 s | 0.69 s |
-| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.39 s | 0.21 s | 1.5 s |
+| T=600, M≤10, rate ± sd | 50.0 s | 12.4 s | 0.033 s | 0.021 s | 0.16 s |
+| T=600, M≤10, evidence only | 0.065 s | — | 0.020 s | 0.017 s | 0.073 s |
+| T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.70 s |
+| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 1.5 s |
 
 `binsdfc-fb` is the original with the forward–backward SDF, the matrix-vector
 central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)); best
-of 3 runs. bayesbin is no faster on 4 threads than on 1 core.
+of 5 runs, `OMP_NUM_THREADS` set to the cores given. (binsdfc itself always runs 4 threads.) bayesbin is no faster on 4 threads than on 1 core.
 
 - The evidences use the same dynamic programme in both, so they take about
   the same time. At T=2016 bayesbin's matrix-vector steps are about 3× faster
