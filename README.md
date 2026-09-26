@@ -212,6 +212,8 @@ Two licences, by directory:
   marked) and `tools/make_testdata.py` (a port of its test-data script). Their
   licence text is in [cpp/COPYING](cpp/COPYING) and
   [reference/COPYING](reference/COPYING).
+- The paper in [paper/](paper/) is copyright its authors, not under either
+  licence.
 
 ## Citing
 
