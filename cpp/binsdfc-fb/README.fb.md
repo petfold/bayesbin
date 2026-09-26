@@ -22,6 +22,11 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
     folded into them; the sum over a bin's index is a scaled product, with the
     same bound (1e-14 absolute per bin probability) and exact recomputation.
     Reuses the evidences' forward iteration when the data are unchanged.
+    The bin posterior runs row by row over the bin start a, in simple
+    vectorised loops: the sum over the bin index as contiguous multiply-adds
+    along b, the posterior moments from per-length reciprocal tables (every
+    interval holds one spike or gap per trial, checked; else divided), `exp`
+    vectorised (`vmath.cpp`). 0.134 s → 0.073 s at T=2016, M≤30, one thread.
     OpenMP throughout.
 - `spikecounter.h/.cpp`: the bin evidences log B(s+σ, g+γ) from `lgamma`
   tables indexed by the integer counts, and the counts from prefix sums, so no
@@ -36,15 +41,25 @@ original; unmodified original in `../../reference/binsdfc-0.1/`).
 - `binsdfc.cpp`: the SDF uses it by default. `--virtual-spike` / `-V` switches
   every new path off, so the output is the original's, bit for bit. Output
   format unchanged.
-- `CMakeLists.txt`: the new source file.
+- `vmath.cpp` (new): the vectorised `exp`, alone compiled with `-ffast-math`.
+- `CMakeLists.txt`: the new source files; `-ffast-math` off globally (see Build).
 
 With the upper bound on the firing probability (the incomplete-Beta prior) the
 original paths are used, as before.
 
 ## Build
 
-    g++ -O2 -fopenmp -std=c++14 -o binsdfc binsdfc.cpp evidencecomputer.cpp logadd.cpp \
-        simplexminimiser.cpp spikecounter.cpp spikedensityfunction.cpp forwardbackward.cpp
+`vmath.cpp` alone is compiled with `-ffast-math`, which is when glibc declares
+its vector `exp`; everything else, and the link, without it:
+
+    g++ -O2 -fopenmp -ffast-math -c vmath.cpp
+    g++ -O2 -fopenmp -fno-math-errno -std=c++14 -o binsdfc binsdfc.cpp evidencecomputer.cpp \
+        logadd.cpp simplexminimiser.cpp spikecounter.cpp spikedensityfunction.cpp \
+        forwardbackward.cpp vmath.o
+
+or `cmake . && make`. The original's CMake flags put `-ffast-math` on every
+file; that is removed, because the new code relies on −∞ arithmetic, which
+`-ffinite-math-only` lets the compiler assume away.
 
 ## Agreement
 
