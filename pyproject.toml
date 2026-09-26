@@ -9,7 +9,7 @@ description = "Exact Bayesian binning of rates (Endres, Oram, Schindelin & Föld
 readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
-authors = [{ name = "Peter Földiák" }]
+authors = [{ name = "Peter Foldiak" }]
 keywords = ["bayesian", "binning", "histogram", "psth", "spike trains", "change points",
             "rate estimation", "poisson", "segmentation"]
 classifiers = [

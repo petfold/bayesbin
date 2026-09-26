@@ -1,7 +1,7 @@
 /***************************************************************************
  *   Copyright (C) 2007 by Dominik Endres   *
  *   dominik.endres@gmail.com   *
- *   Modified 2026-09-26 by Peter Földiák: SDF by forward-backward        *
+ *   Modified 2026-09-26 by Peter Foldiak: SDF by forward-backward        *
  *   (forwardbackward.h),                                                  *
  *   the original per-time-index path kept behind --virtual-spike (-V).    *
  *                                                                         *

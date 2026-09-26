@@ -1,4 +1,4 @@
-// Modified 2026-09-26 by Peter Földiák: mDataVersion (see README.fb.md).
+// Modified 2026-09-26 by Peter Foldiak: mDataVersion (see README.fb.md).
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *

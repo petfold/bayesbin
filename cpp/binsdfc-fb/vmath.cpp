@@ -1,6 +1,6 @@
 /***************************************************************************
  *   Vectorised exp for forwardbackward.cpp. Added 2026-09-26 to binsdfc.  *
- *   Copyright (C) 2026 by Peter Földiák                                   *
+ *   Copyright (C) 2026 by Peter Foldiak                                   *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *

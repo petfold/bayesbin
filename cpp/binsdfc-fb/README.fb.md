@@ -1,6 +1,6 @@
 # binsdfc-fb: binsdfc 0.1 with a forward–backward SDF
 
-A modified copy of Dominik Endres's binsdfc 0.1, changes by Peter Földiák
+A modified copy of Dominik Endres's binsdfc 0.1, changes by Peter Foldiak
 (GPL-2.0-or-later, as the original, licence text in [../COPYING](../COPYING);
 unmodified original in `../../reference/binsdfc-0.1/`).
 

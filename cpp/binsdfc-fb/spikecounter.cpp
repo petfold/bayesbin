@@ -1,4 +1,4 @@
-// Modified 2026-09-26 by Peter Földiák: bin evidences from lgamma tables and prefix sums; co-occurrence counts
+// Modified 2026-09-26 by Peter Foldiak: bin evidences from lgamma tables and prefix sums; co-occurrence counts
 // from spike positions (see README.fb.md). The original code runs with --virtual-spike.
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *

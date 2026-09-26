@@ -1,11 +1,15 @@
 # bayesbin
 
+[![tests](https://github.com/petfold/bayesbin/actions/workflows/tests.yml/badge.svg)](https://github.com/petfold/bayesbin/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+[![status](https://img.shields.io/badge/status-beta-yellow)](#status-and-limits)
+
 Exact Bayesian binning of rates in NumPy/SciPy, after
 
 > D. Endres, M. Oram, J. Schindelin, P. Földiák (2008). *Bayesian binning beats
 > approximate alternatives: estimating peri-stimulus time histograms.*
 > Advances in Neural Information Processing Systems 20, 393–400. MIT Press.
-> ([paper](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html))
+> ([NeurIPS page](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html); a copy in [paper/](paper/))
 
 A rate on T ordered intervals is modelled as piecewise constant with M bin
 boundaries. Boundary positions, per-bin rates (conjugate priors) and M itself
@@ -226,4 +230,4 @@ If you use this, please cite the paper:
 
 The method is Endres, Oram, Schindelin and Földiák's; binsdfc, the original
 C++ implementation, is Dominik Endres's; bayesbin and the binsdfc-fb changes
-are by Peter Földiák.
+are by Peter Foldiak.
