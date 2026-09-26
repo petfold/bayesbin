@@ -76,6 +76,34 @@ original program does.
 - Planned: cyclic profiles (a bin may wrap round the end of a day or week);
   2-D via recursive partitions (see [docs/NOTES.md](docs/NOTES.md)).
 
+## Speed against the original
+
+binsdfc 0.1 unmodified (`g++ -O2 -fopenmp`; its own flags `-march=native
+-ffast-math` made no real difference), against bayesbin with NumPy 2.5 and
+OpenBLAS. Intel i7-3612QM (4 cores, 2 hyperthreads each); "1 core" means one
+physical core, and "4 threads" four separate physical cores. binsdfc is timed
+as a process, bayesbin in-process without the import.
+
+| case | binsdfc, 1 core | binsdfc, 4 threads | bayesbin, 1 core | bayesbin, 4 threads |
+|---|---|---|---|---|
+| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | 0.04 s | 0.04 s |
+| T=600, M≤10, rate ± sd | 50.0 s | 12.5 s | 0.15 s | 0.15 s |
+| T=600, M≤10, evidence only | 0.07 s | — | 0.08 s | — |
+| T=2016, M≤30, evidence only | 2.0 s | — | 0.69 s | — |
+| T=2016, M≤30, rate ± sd | stopped after 26 min | | 1.5 s | 1.5 s |
+
+- The evidences use the same dynamic programme in both, so they take about
+  the same time. At T=2016 bayesbin's matrix-vector steps are about 3× faster
+  than binsdfc's triple loop.
+- For the rate and its error bars binsdfc uses the paper's virtual-spike
+  device: for every time point it reruns the whole programme twice (rate and
+  second moment), O(M·T³). bayesbin gets every time point from one backward
+  pass, O(M·T²). The gap is the algorithm, not the language.
+- binsdfc fixes 4 OpenMP threads over time points (`omp_set_num_threads(4)`)
+  and scales almost 4×. bayesbin gains nothing from threads: its remaining time
+  is single-threaded element-wise work on T×T arrays (the bin evidences, the
+  gain matrix, the moments), not the matrix products.
+
 ## Licence
 
 Not chosen yet. The code in `src/` was written from the paper; the original
