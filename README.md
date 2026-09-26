@@ -108,6 +108,30 @@ of 5 runs, `OMP_NUM_THREADS` set to the cores given. (binsdfc itself always runs
   is single-threaded element-wise work on T×T arrays (the bin evidences, the
   gain matrix, the moments), not the matrix products.
 
+### Larger problems
+
+30 trials of a synthetic daily profile (5-minute slots: night, morning ramp,
+day, evening peak, plus a 2-hour burst each week), rate ± sd, most probable M
+only, peak memory from `/usr/bin/time`:
+
+| T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | peak memory | bayesbin, 1 core |
+|---|---|---|---|---|---|
+| 4032 (2 weeks) | 30 | 1.2 s | 0.60 s | 233 MB | 6.0 s, 1.1 GB |
+| 4032 | 60 | 1.9 s | 0.89 s | 237 MB | 8.7 s, 1.1 GB |
+| 4032 | 120 | 3.0 s | 1.4 s | 243 MB | |
+| 8064 (4 weeks) | 120 | 12.5 s | 5.9 s | 0.93 GB | (≈5 GB: not run) |
+| 12096 (6 weeks) | 120 | 28 s | 13.7 s | 2.1 GB | |
+| 12096 | 400 | | 38 s | 2.1 GB | |
+
+- Time grows as T² (×4.1 for 2T, ×9.3 for 3T) and linearly in M; memory as
+  T² (binsdfc-fb ≈ 14·T² bytes, bayesbin ≈ 70·T²). The original needs 8.5 s
+  for the evidences alone at T=4032.
+- binsdfc-fb and bayesbin agree to the 6 printed digits at T=4032.
+- A periodic series needs M to grow with its length: the most probable M was
+  106 at 2 weeks (M ≤ 120) and 297 at 6 weeks (M ≤ 400), the same daily shape
+  re-learnt every day. For daily or weekly profiles, fold the series instead
+  (days as trials, time of day as the axis): T = 288, a few milliseconds.
+
 ## Licence
 
 Not chosen yet. The code in `src/` was written from the paper; the original
