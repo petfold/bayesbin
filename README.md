@@ -43,7 +43,7 @@ original program does.
 
 ## Verification
 
-`pytest` (13 tests):
+`pytest` (18 tests):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -57,15 +57,19 @@ original program does.
 - **Against the paper's own device** (§4): P(spike | k) as the ratio of
   evidences with and without a virtual spike at k equals the forward–backward
   result for every k.
+- The fast paths against the exact log-space ones, on data whose evidences span
+  thousands of nats, with the underflow fallback forced.
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.
 
 ## Status and limits
 
-- Cost: the evidence is O(M·T²); the bin posterior as implemented is
-  O(M²·T²). T = 288 with M ≤ 20 takes about 1 s; T = 2016 with M ≤ 30 about
-  60 s. The bin posterior can be folded into one matrix product per M range,
-  if the dynamic range allows it; not done yet.
+- Cost: O(M·T²) time and O(T²) memory. Each step of the forward and
+  backward programmes is one matrix–vector product, and the bin posterior one
+  matrix product, on precomputed exponentials. Wherever underflow could cost
+  more than 10⁻¹³ (relative, evidences) or 10⁻¹⁴ (absolute, bin posterior),
+  that entry is recomputed exactly in log space, and `exact=True` does
+  everything that way. See the timings below.
 - Not yet ported from the original: latency posteriors, signal separation
   levels, hyperparameter optimisation (`-P`), bin-boundary position posteriors
   for a fixed M (`-p`).

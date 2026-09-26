@@ -178,3 +178,47 @@ def test_poisson_weak_prior_centres_on_the_overall_rate():
 def test_more_than_one_spike_per_interval_is_refused():
     with pytest.raises(ValueError):
         spike_counts([[3, 3]], 0, 5)
+
+
+# --- the fast bin posterior against the exact log-space one ---------------------------
+
+
+def _strong_poisson(T=400, seed=6):
+    """Lots of data and sharp steps: evidences span thousands of nats."""
+    rng = np.random.default_rng(seed)
+    lam = np.where((np.arange(T) // 50) % 2 == 0, 20.0, 200.0)
+    return PoissonModel.weak_prior(rng.poisson(lam).astype(float))
+
+
+@pytest.mark.parametrize("mass", [None, 0.0, 0.9])
+def test_fast_bin_posterior_equals_exact(mass):
+    for model in (_strong_poisson(), BernoulliModel(*_seed1())):
+        fast = fit(model, 12, m_mass=mass, keep_bins=True)
+        slow = fit(model, 12, m_mass=mass, keep_bins=True, exact=True)
+        np.testing.assert_allclose(fast.bin_posterior, slow.bin_posterior, atol=1e-12)
+        np.testing.assert_allclose(fast.rate, slow.rate, rtol=1e-10)
+        # var = E[f²] - E[f]² cancels: rates ~200 with sd ~2 magnify rounding ~10⁴×
+        np.testing.assert_allclose(fast.rate_std, slow.rate_std, rtol=1e-6)
+
+
+def test_underflow_fallback_recomputes_exactly():
+    from bayesbin import bin_posterior
+    from bayesbin.core import _backward, _forward
+
+    model = _strong_poisson(T=200)
+    L = model.log_bin_evidence()
+    fwd, bwd = _forward(L, 8), _backward(L, 8)
+    log_c = -fwd[:, -1] - np.log(9)
+    everywhere = bin_posterior(L, fwd, bwd, log_c, tol=0.0)  # every entry takes the fallback
+    np.testing.assert_allclose(bin_posterior(L, fwd, bwd, log_c), everywhere, atol=1e-12)
+    np.testing.assert_allclose(bin_posterior(L, fwd, bwd, log_c, exact=True), everywhere, atol=1e-13)
+
+
+def test_fast_dynamic_programmes_equal_the_exact_ones():
+    from bayesbin.core import _backward, _forward, _forward_exact
+
+    for model in (_strong_poisson(T=300), BernoulliModel(*_seed1()),
+                  PoissonModel.weak_prior(np.zeros(50))):  # all-zero data: flat gains
+        L = model.log_bin_evidence()
+        np.testing.assert_allclose(_forward(L, 15), _forward_exact(L, 15), rtol=1e-12)
+        np.testing.assert_allclose(_backward(L, 15), _backward(L, 15, exact=True), rtol=1e-12)
