@@ -64,9 +64,11 @@ original program does.
 
 ## Status and limits
 
-- Cost: O(M·T²) time and O(T²) memory. Each step of the forward and
-  backward programmes is one matrix–vector product, and the bin posterior one
-  matrix product, on precomputed exponentials. Wherever underflow could cost
+- Cost: O(M·T²) time and O(T²) memory. The forward and backward programmes
+  run in blocks of 256 columns: each block's slice of exponentiated gains is
+  made once, from the upper triangle only, and serves all M steps as
+  matrix–vector products; the bin posterior is one matrix product. The peak
+  memory is still set by T×T arrays (bin evidences, moments, bin posterior). Wherever underflow could cost
   more than 10⁻¹³ (relative, evidences) or 10⁻¹⁴ (absolute, bin posterior),
   that entry is recomputed exactly in log space, and `exact=True` does
   everything that way. See the timings below.

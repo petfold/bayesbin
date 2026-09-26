@@ -225,40 +225,55 @@ def _forward_exact(L: np.ndarray, max_m: int) -> np.ndarray:
     return fwd
 
 
-def _forward(L: np.ndarray, max_m: int, *, tol: float = 1e-13) -> np.ndarray:
-    """fwd[m, k] as in _forward_exact, one matrix-vector product per step.
+def _forward(L: np.ndarray, max_m: int, *, tol: float = 1e-13, block: int = 256) -> np.ndarray:
+    """fwd[m, k] as in _forward_exact, in blocks of columns.
 
     Relative to the one-bin evidence b[k] = L[0, k], a step is
         φ_m[k] = log Σ_{r<k} exp(φ_{m-1}[r] + G[r, k]),
-        G[r, k] = L[r+1, k] - b[k] + b[r]   (the gain of a boundary at r),
-    and exp(G - column max) is computed once. Each step then scales exp(φ) by
-    its maximum and multiplies. A term dropped to underflow is below the
-    smallest normal double, so a column whose sum is not far above T·TINY could
-    be off by more than `tol` (relative); those columns are recomputed exactly."""
+        G[r, k] = L[r+1, k] - b[k] + b[r]   (the gain of a boundary at r).
+    Columns go in blocks [k0, k1): a block needs φ_{m-1}[r] only for r < k1,
+    which is final by then (earlier blocks: every m; this block: m - 1). So each
+    block's slice of exp(G - column max) is made once, from the rows that reach
+    it (the upper triangle only, no T×T gain matrix), and serves all m. A step
+    scales exp(φ) by its maximum over those rows (per block: consistent within
+    each column's sum). A term lost to underflow is below the smallest normal
+    double, so a column whose sum is not far above T·TINY could be off by more
+    than `tol` (relative); those columns are recomputed exactly."""
     T = L.shape[0]
     fwd = np.full((max_m + 1, T), _NEG_INF)
     b = L[0].copy()
     fwd[0] = b
     if max_m == 0 or T == 1:
         return fwd
-    G = np.full((T, T), _NEG_INF)
-    G[:-1] = L[1:] - b[None, :] + b[:-1, None]  # G[r, k] = L[r+1, k] - b[k] + b[r]
-    G[np.tril_indices(T)] = _NEG_INF  # only r < k
-    c = G.max(axis=0)
-    c[~np.isfinite(c)] = 0.0
-    E = np.exp(G - c)
-    floor = 2 * T * _TINY / tol  # below this a column's sum may carry > tol relative error
-    phi = np.zeros(T)
-    for m in range(1, max_m + 1):
-        p = np.max(phi[np.isfinite(phi)]) if np.isfinite(phi).any() else 0.0
-        sums = np.exp(phi - p) @ E
-        with np.errstate(divide="ignore"):
-            new = np.log(sums) + p + c
-        bad = (sums < floor) & np.isfinite(G).any(axis=0)
-        if bad.any():
-            new[bad] = logsumexp(phi[:, None] + G[:, bad], axis=0)
-        phi = new
-        fwd[m] = b + phi
+    phi = np.full((max_m + 1, T), _NEG_INF)
+    phi[0] = 0.0
+    floor = 2 * T * _TINY / tol
+    for k0 in range(0, T, block):
+        k1 = min(T, k0 + block)
+        nr = k1 - 1  # rows r = 0..k1-2 reach this block
+        if nr <= 0:
+            continue
+        # G[r, k] = L[r+1, k] - b[k] + b[r]; -inf where r >= k (L is -inf below its diagonal)
+        G = L[1:k1, k0:k1] - b[None, k0:k1] + b[:nr, None]
+        c = G.max(axis=0)
+        c[~np.isfinite(c)] = 0.0
+        E = np.exp(G - c)
+        for m in range(1, max_m + 1):
+            prev = phi[m - 1, :nr]
+            fin = np.isfinite(prev)
+            if not fin.any():
+                continue
+            p = prev[fin].max()
+            sums = np.exp(prev - p) @ E
+            with np.errstate(divide="ignore"):
+                new = np.log(sums) + p + c
+            ks = np.arange(k0, k1)
+            new[ks < m] = _NEG_INF  # needs m boundaries before k
+            bad = (sums < floor) & (ks >= m) & np.isfinite(G).any(axis=0)
+            if bad.any():
+                new[bad] = logsumexp(prev[:, None] + G[:, bad], axis=0)
+            phi[m, k0:k1] = new
+    fwd[1:] = b[None, :] + phi[1:]
     return fwd
 
 
