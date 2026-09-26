@@ -43,7 +43,7 @@ original program does.
 
 ## Verification
 
-`pytest` (27 tests; 4 need `cpp/binsdfc-fb` built):
+`pytest` (28 tests; 4 need `cpp/binsdfc-fb` built):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -69,7 +69,8 @@ original program does.
   block (`bin_block`, from prefix sums and `lgamma` tables); the forward and
   backward programmes run in blocks of 256 columns, each block's slice of
   exponentiated gains made once from the upper triangle and serving all M
-  steps; the bin posterior is accumulated in tiles of 256 × 1024 bins, as
+  steps (the rows before a block, final for every step, as one matrix
+  product; only the rows inside it step by step); the bin posterior is accumulated in tiles of 256 × 1024 bins, as
   scaled matrix products, into the rates and the boundary posterior.
   `keep_bins=True` (the whole bin posterior) and `exact=True` use T×T arrays. Wherever underflow could cost
   more than 10⁻¹³ (relative, evidences) or 10⁻¹⁴ (absolute, bin posterior),
@@ -123,11 +124,11 @@ check put the previous build about 2× slower than in its own earlier runs too).
 
 | T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin, 1 core |
 |---|---|---|---|---|---|
-| 2016 (1 week) | 30 | 0.27 s | 0.09 s | 12 MB | 0.73 s, 97 MB |
-| 4032 (2 weeks) | 60 | | | | 3.6 s, 113 MB |
+| 2016 (1 week) | 30 | 0.27 s | 0.09 s | 12 MB | 0.50 s, 89 MB |
+| 4032 (2 weeks) | 60 | | | | 1.95 s, 111 MB |
 | 4032 | 120 | 2.4 s | 0.89 s | 25 MB | |
-| 8064 (4 weeks) | 120 | 9.5 s | 3.0 s | 44 MB | 25.7 s, 175 MB |
-| 12096 (6 weeks) | 120 | 20.4 s | 6.4 s | 61 MB | 59.5 s, 247 MB |
+| 8064 (4 weeks) | 120 | 9.5 s | 3.0 s | 44 MB | 12.2 s, 179 MB |
+| 12096 (6 weeks) | 120 | 20.4 s | 6.4 s | 61 MB | 29.6 s, 246 MB |
 | 24192 (12 weeks) | 120 | | 86 s | 116 MB | |
 
 - binsdfc-fb memory is O(T·M): no T×T array is kept. (Before: ≈14·T²

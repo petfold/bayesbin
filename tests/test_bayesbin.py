@@ -317,3 +317,24 @@ def test_bin_block_tiles_the_full_matrices():
     up = np.isfinite(Lb)
     np.testing.assert_array_equal(m1b[up], m1[100:180, 150:400][up])
     np.testing.assert_array_equal(m2b[up], m2[100:180, 150:400][up])
+
+
+def test_folding_the_models_as_one_matrix_product_equals_the_loop():
+    from scipy.special import logsumexp
+
+    from bayesbin.core import _fold_models
+
+    rng = np.random.default_rng(0)
+    for K, T, spread in [(31, 500, 5.0), (121, 400, 300.0), (61, 300, 2000.0)]:
+        log_c = rng.normal(0, spread, K)
+        log_c[rng.random(K) < 0.2] = -np.inf
+        right = rng.normal(0, spread, (K, T))
+        right[rng.random((K, T)) < 0.1] = -np.inf
+        ref = np.full((K, T), -np.inf)
+        for i in range(K):
+            j = np.arange(K - i)
+            ref[i] = logsumexp(log_c[i + j][:, None] + right[j], axis=0)
+        got = _fold_models(log_c, right)
+        fin = np.isfinite(ref)
+        np.testing.assert_array_equal(np.isfinite(got), fin)
+        np.testing.assert_allclose(got[fin], ref[fin], rtol=1e-15, atol=1e-12)

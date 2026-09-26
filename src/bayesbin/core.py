@@ -53,12 +53,11 @@ def _prefix(x: np.ndarray) -> np.ndarray:
 
 
 def _block_totals(c: np.ndarray, a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
-    """X[a, b] = x[a] + ... + x[b] for a in [a0, a1), b in [b0, b1); 0 where a > b.
-    int32 for whole numbers, else float64."""
-    X = c[None, b0 + 1:b1 + 1] - c[a0:a1, None]
-    if X.dtype.kind == "i":
-        X = X.astype(np.int32)
-    return np.maximum(X, 0)
+    """X[a, b] = x[a] + ... + x[b] for a in [a0, a1), b in [b0, b1) (meaningless where
+    a > b: callers mask those). int32 for whole numbers, else float64."""
+    if c.dtype.kind == "i":
+        return c[None, b0 + 1:b1 + 1].astype(np.int32) - c[a0:a1, None].astype(np.int32)
+    return c[None, b0 + 1:b1 + 1] - c[a0:a1, None]
 
 
 def _block_lengths(a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
@@ -66,22 +65,27 @@ def _block_lengths(a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
     return np.maximum(np.arange(b0, b1, dtype=np.int32)[None, :] - np.arange(a0, a1, dtype=np.int32)[:, None] + 1, 0)
 
 
-def _block_below(a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
-    return np.arange(a0, a1)[:, None] > np.arange(b0, b1)[None, :]
+def _mask_below(X: np.ndarray, a0: int, b0: int, value: float) -> None:
+    """X[a, b] = value where a > b, in place. Only rows a > b0 can be below the
+    diagonal, so only those are touched."""
+    r = max(0, b0 + 1 - a0)
+    if r < X.shape[0]:
+        sub = X[r:]
+        below = np.arange(a0 + r, a0 + X.shape[0])[:, None] > np.arange(b0, b0 + X.shape[1])[None, :]
+        sub[below] = value
 
 
 class _Table:
-    """gammaln(n + shift) for n = 0..N, extended on demand (1-D, cached)."""
+    """gammaln(n + shift) for n = 0..N-1 (1-D). Built for every total the data can
+    produce, so that any bin's total (and, where a > b, a negative one, in range
+    as numpy's index from the end: masked by the caller) is a valid index."""
 
-    def __init__(self, shift: float):
-        self.shift, self.v = shift, np.empty(0)
+    def __init__(self, shift: float, N: int):
+        self.shift, self.v = shift, gammaln(np.arange(N) + shift)
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         if x.dtype.kind != "i":
             return gammaln(x + self.shift)
-        top = int(x.max()) + 1 if x.size else 1
-        if top > len(self.v):
-            self.v = gammaln(np.arange(max(top, 2 * len(self.v))) + self.shift)
         return self.v[x]
 
 
@@ -122,7 +126,9 @@ class BernoulliModel:
     def _pre(self):
         """prefix sums of s and g, and the lgamma tables (all 1-D)."""
         a, c = self.sigma, self.gamma
-        return (_prefix(self.s), _prefix(self.g), _Table(a), _Table(c), _Table(a + c),
+        cs, cg = _prefix(self.s), _prefix(self.g)
+        nS, nG = int(cs[-1]) + 1, int(cg[-1]) + 1
+        return (cs, cg, _Table(a, nS), _Table(c, nG), _Table(a + c, nS + nG),
                 gammaln(a + c), gammaln(a), gammaln(c))
 
     def bin_block(self, a0: int, a1: int, b0: int, b1: int, moments: bool = False):
@@ -130,15 +136,29 @@ class BernoulliModel:
         a in [a0, a1), b in [b0, b1); with moments=True also E[f] and E[f²] of each bin."""
         cs, cg, tA, tB, tC, kAC, kA, kC = self._pre
         S, G = _block_totals(cs, a0, a1, b0, b1), _block_totals(cg, a0, a1, b0, b1)
-        L = tA(S) + tB(G) - tC(S + G)
+        N = S + G
+        L = tA(S)
+        L += tB(G)
+        L -= tC(N)
         L += kAC  # added in this order: the same doubles as a left-to-right sum
         L -= kA
         L -= kC
-        L[_block_below(a0, a1, b0, b1)] = _NEG_INF
+        _mask_below(L, a0, b0, _NEG_INF)
         if not moments:
             return L
-        a, n = S + self.sigma, S + G + self.sigma + self.gamma
-        return L, a / n, a * (a + 1) / (n * (n + 1))
+        a = S + self.sigma
+        n = N + self.sigma
+        n += self.gamma
+        with np.errstate(divide="ignore", invalid="ignore"):  # a > b: masked below
+            m1 = a / n
+            m2 = a + 1.0
+            m2 *= a
+            n1 = n + 1.0
+            n1 *= n
+            m2 /= n1
+        _mask_below(m1, a0, b0, 0.0)
+        _mask_below(m2, a0, b0, 0.0)
+        return L, m1, m2
 
     def log_bin_evidence(self) -> np.ndarray:
         """The whole T×T matrix of bin_block (-inf below the diagonal)."""
@@ -196,7 +216,8 @@ class PoissonModel:
         const = bool(np.all(self.e == e0))
         logE = np.log(e0 * np.arange(self.T + 1) + self.beta) if const else None
         ce = None if const else np.concatenate([[0.0], np.cumsum(self.e)])
-        return (_prefix(self.y), ce, e0 if const else None, logE, _Table(self.alpha),
+        cy = _prefix(self.y)
+        return (cy, ce, e0 if const else None, logE, _Table(self.alpha, int(cy[-1]) + 1),
                 self.alpha * np.log(self.beta) - gammaln(self.alpha))
 
     def bin_block(self, a0: int, a1: int, b0: int, b1: int, moments: bool = False):
@@ -209,15 +230,19 @@ class PoissonModel:
             n = _block_lengths(a0, a1, b0, b1)
             E, lE = (n if e0 == 1.0 else e0 * n), logE[n]
         else:
-            E = _block_totals(ce, a0, a1, b0, b1).astype(float)
+            E = np.maximum(_block_totals(ce, a0, a1, b0, b1), 0.0)
             lE = np.log(E + self.beta)
         L = k0 + tY(Y)
         L -= (Y + self.alpha) * lE
-        L[_block_below(a0, a1, b0, b1)] = _NEG_INF
+        _mask_below(L, a0, b0, _NEG_INF)
         if not moments:
             return L
         a, b = Y + self.alpha, E + self.beta
-        return L, a / b, a * (a + 1) / b**2
+        with np.errstate(divide="ignore", invalid="ignore"):  # a > b: masked below
+            m1, m2 = a / b, a * (a + 1) / b**2
+        _mask_below(m1, a0, b0, 0.0)
+        _mask_below(m2, a0, b0, 0.0)
+        return L, m1, m2
 
     def log_bin_evidence(self) -> np.ndarray:
         """The whole T×T matrix of bin_block (-inf below the diagonal)."""
@@ -260,7 +285,7 @@ def _forward_exact(L: np.ndarray, max_m: int) -> np.ndarray:
     return fwd
 
 
-def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int = 256, _blk=None) -> np.ndarray:
+def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _blk=None) -> np.ndarray:
     """fwd[m, k] as in _forward_exact, in blocks of columns.
 
     Relative to the one-bin evidence b[k] = L[0, k], a step is
@@ -269,15 +294,19 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int = 256, _blk=None)
     Columns go in blocks [k0, k1): a block needs φ_{m-1}[r] only for r < k1,
     which is final by then (earlier blocks: every m; this block: m - 1). So each
     block's slice of exp(G - column max) is made once, from the rows that reach
-    it (the upper triangle only, no T×T gain matrix), and serves all m. A step
-    scales exp(φ) by its maximum over those rows (per block: consistent within
-    each column's sum). A term lost to underflow is below the smallest normal
+    it (the upper triangle only, no T×T gain matrix), and serves all m. The rows
+    before the block are final for every m, so their contributions to all M
+    steps are one matrix product (BLAS-3: the slice is read once, not M times);
+    only the rows inside the block go step by step. Each part is scaled by its
+    own maximum (consistent within each column's sum). A term lost to underflow is below the smallest normal
     double, so a column whose sum is not far above T·TINY could be off by more
     than `tol` (relative); those columns are recomputed exactly.
 
     `ev` is a T×T array of bin evidences or a model (its bin_block is used: no
     T×T array at all)."""
     T, blk = _blocks(ev) if _blk is None else _blk
+    if block is None:
+        block = 256  # measured best for NumPy between T = 2016 and 8064 (narrower: call overhead)
     fwd = np.full((max_m + 1, T), _NEG_INF)
     b = np.array(blk(0, 1, 0, T)[0], dtype=float)
     fwd[0] = b
@@ -292,23 +321,49 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int = 256, _blk=None)
         if nr <= 0:
             continue
         # G[r, k] = L[r+1, k] - b[k] + b[r]; -inf where r >= k (L is -inf below its diagonal)
-        G = blk(1, k1, k0, k1) - b[None, k0:k1] + b[:nr, None]
+        G = np.subtract(blk(1, k1, k0, k1), b[None, k0:k1])  # a new array: blk may return a view
+        G += b[:nr, None]
         c = G.max(axis=0)
-        c[~np.isfinite(c)] = 0.0
-        E = np.exp(G - c)
+        reach = np.isfinite(c)  # columns with any finite gain (fixed for the block)
+        c[~reach] = 0.0
+        E = np.subtract(G, c)
+        np.exp(E, out=E)
+        ks = np.arange(k0, k1)
+        # rows before the block (r < k0) are final for every m: their contributions to all M
+        # steps are one matrix product, each step m scaled by its own maximum q[m]
+        if k0 > 0:
+            Pb = phi[:max_m, :k0]  # Pb[m-1, r] = phi_{m-1}[r]
+            q = Pb.max(axis=1)
+            qfin = np.isfinite(q)  # step m-1 has a finite phi before the block
+            q[~qfin] = 0.0
+            X = np.subtract(Pb, q[:, None])
+            np.exp(X, out=X)
+            before = X @ E[:k0]  # (max_m, width): row m-1 = sum_{r<k0} exp(phi_{m-1}[r] - q) E[r]
         for m in range(1, max_m + 1):
-            prev = phi[m - 1, :nr]
-            fin = np.isfinite(prev)
-            if not fin.any():
+            # rows inside the block (k0 <= r < k1-1): sequential in m, at most block - 1 of them
+            prev_in = phi[m - 1, k0:nr]
+            p_in = prev_in.max() if prev_in.size else _NEG_INF
+            p_b = q[m - 1] if k0 > 0 and qfin[m - 1] else _NEG_INF
+            p = max(p_in, p_b)
+            if p == _NEG_INF:
                 continue
-            p = prev[fin].max()
-            sums = np.exp(prev - p) @ E
+            sums = np.zeros(k1 - k0)
+            if p_b != _NEG_INF:
+                sums += before[m - 1] * np.exp(p_b - p)
+            if p_in != _NEG_INF:
+                v = np.subtract(prev_in, p)
+                np.exp(v, out=v)
+                sums += v @ E[k0:nr]
             with np.errstate(divide="ignore"):
-                new = np.log(sums) + p + c
-            ks = np.arange(k0, k1)
-            new[ks < m] = _NEG_INF  # needs m boundaries before k
-            bad = (sums < floor) & (ks >= m) & np.isfinite(G).any(axis=0)
+                new = np.log(sums)
+            new += p
+            new += c
+            if m > k0:
+                new[ks < m] = _NEG_INF  # needs m boundaries before k
+            # a lost term is < TINY relative to its part's scale, which is <= exp(p)
+            bad = (sums < floor) & (ks >= m) & reach
             if bad.any():
+                prev = phi[m - 1, :nr]
                 new[bad] = logsumexp(prev[:, None] + G[:, bad], axis=0)
             phi[m, k0:k1] = new
     fwd[1:] = b[None, :] + phi[1:]
@@ -364,6 +419,19 @@ def _messages(fwd: np.ndarray, bwd: np.ndarray, K: int) -> tuple[np.ndarray, np.
     return left, right
 
 
+def _fold_models(log_c: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """R[i, b] = log Σ_j exp(log_c[i+j] + right_j[b]): the average over M folded into
+    the right-hand messages. Only models with a weight contribute, and model M gives
+    rows i = 0..M the messages right_{M-i}, i.e. rows M..0 reversed: one exact
+    log-add-exp per model, O(K·T) memory. (A single scaled matrix product loses too
+    much to underflow here: rows i near K reach only small j.)"""
+    K, T = right.shape
+    R = np.full((K, T), _NEG_INF)
+    for M in np.flatnonzero(np.isfinite(log_c)):
+        np.logaddexp(R[:M + 1], log_c[M] + right[M::-1], out=R[:M + 1])
+    return R
+
+
 def bin_posterior(L: np.ndarray, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray,
                   *, exact: bool = False, tol: float = 1e-14) -> np.ndarray:
     """W[a, b] = Σ_M c_M Σ_i exp(left_i[a] + L[a, b] + right_{M-i}[b]): the posterior
@@ -378,10 +446,7 @@ def bin_posterior(L: np.ndarray, fwd: np.ndarray, bwd: np.ndarray, log_c: np.nda
     does every entry that way (the reference for tests)."""
     T, K = L.shape[0], len(log_c)
     left, right = _messages(fwd, bwd, K)
-    R = np.full((K, T), _NEG_INF)
-    for i in range(K):
-        j = np.arange(K - i)
-        R[i] = logsumexp(log_c[i + j][:, None] + right[j], axis=0)
+    R = _fold_models(log_c, right)
 
     if exact:
         C = np.full((T, T), _NEG_INF)
@@ -434,10 +499,7 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
     column sums (negated) at b + 1."""
     T, K = model.T, len(log_c)
     left, right = _messages(fwd, bwd, K)
-    R = np.full((K, T), _NEG_INF)
-    for i in range(K):
-        j = np.arange(K - i)
-        R[i] = logsumexp(log_c[i + j][:, None] + right[j], axis=0)
+    R = _fold_models(log_c, right)
     ma, mb = left.max(axis=0), R.max(axis=0)
     ma[~np.isfinite(ma)] = 0.0
     mb[~np.isfinite(mb)] = 0.0
@@ -449,18 +511,26 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
         for b0 in range(a0, T, tile_b):
             b1 = min(T, b0 + tile_b)
             L, m1, m2 = model.bin_block(a0, a1, b0, b1, moments=True)
-            S = A[a0:a1] @ B[:, b0:b1]
-            shift = ma[a0:a1, None] + mb[None, b0:b1]
-            with np.errstate(divide="ignore", invalid="ignore"):
-                C = np.log(S) + shift
-                risk = log_risk + shift + L > 0.0
-            if risk.any():
-                aa, bb = np.nonzero(risk)
-                C[aa, bb] = logsumexp(left[:, a0 + aa] + R[:, b0 + bb], axis=0)
-            with np.errstate(invalid="ignore", over="ignore"):
-                W = np.exp(C + L)
-            W = np.nan_to_num(W, nan=0.0, posinf=0.0)
-            q1, q2 = W * m1, W * m2
+            C = A[a0:a1] @ B[:, b0:b1]
+            with np.errstate(divide="ignore"):
+                np.log(C, out=C)
+            C += ma[a0:a1, None]
+            C += mb[None, b0:b1]
+            # entries where underflow could cost more than tol: the scalar bound first, the
+            # mask only if it can be crossed
+            top = ma[a0:a1].max() + mb[b0:b1].max() + L.max()
+            if log_risk + top > 0.0:
+                with np.errstate(invalid="ignore"):
+                    risk = log_risk + ma[a0:a1, None] + mb[None, b0:b1] + L > 0.0
+                if risk.any():
+                    aa, bb = np.nonzero(risk)
+                    C[aa, bb] = logsumexp(left[:, a0 + aa] + R[:, b0 + bb], axis=0)
+            C += L  # -inf where a > b or where no configuration has this bin
+            W = np.exp(C, out=C)
+            q1 = m1
+            q1 *= W  # W * E[f | bin], in m1's storage
+            q2 = m2
+            q2 *= W
             d1[a0:a1] += q1.sum(axis=1)
             d2[a0:a1] += q2.sum(axis=1)
             d1[b0 + 1:b1 + 1] -= q1.sum(axis=0)
