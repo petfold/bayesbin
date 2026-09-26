@@ -244,3 +244,19 @@ def test_forward_backward_cpp_matches_bayesbin_and_the_original(mass):
     r = fit(BernoulliModel(s, g), 10, m_mass=float(mass))
     np.testing.assert_allclose(fb[:, 1], r.rate, rtol=6e-6)  # 6 printed digits
     np.testing.assert_allclose(fb[:, 2], r.rate_std, rtol=6e-6)
+
+
+@pytest.mark.skipif(not _FB.exists(), reason="cpp/binsdfc-fb not built (see its README.fb.md)")
+def test_forward_backward_cpp_on_data_that_exercises_the_underflow_bounds():
+    # 400 trials, rate switching 0.02 / 0.3 every 50 intervals: evidences span ~10^4 nats
+    import subprocess
+
+    path = DATA / "strong_400trials.txt"
+    out = subprocess.run([str(_FB), "-s", "0", "-e", "400", "-m", "12", "-v", "-l", "0.9", str(path)],
+                         capture_output=True, text=True, check=True).stdout.splitlines()
+    fb = np.loadtxt(out)
+    trials = [list(map(int, line.split()[1:])) for line in open(path)]
+    s, g = spike_counts(trials, 0, 399)
+    r = fit(BernoulliModel(s, g), 12, m_mass=0.9, exact=True)
+    np.testing.assert_allclose(fb[:, 1], r.rate, rtol=6e-6)
+    np.testing.assert_allclose(fb[:, 2], r.rate_std, rtol=6e-6, atol=1e-6)

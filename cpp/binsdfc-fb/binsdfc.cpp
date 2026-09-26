@@ -127,6 +127,7 @@ using namespace std;
 #include "unistd.h"
 #include "getopt.h"
 #include "spikedensityfunction.h"
+#include "forwardbackward.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -289,6 +290,7 @@ int main(int argc, char *argv[])
 			case 'P': 	findPriorExponents=true;
 			break;
 			case 'V': 	virtualSpike=true;
+					fb::enabled=false;  // everything as in the original
 					break;
 			case 'n': 	doSDF=false;
 			break;
@@ -329,7 +331,7 @@ int main(int argc, char *argv[])
 				cout<<"--latency-start,-S: start time index for latency calculations "<<endl;		
 				cout<<"--latency-end,-E: end time index for latency calculations "<<endl;
 				cout<<"--no-sdf, -n: don't compute sdf "<<endl;
-				cout<<"--virtual-spike, -V: compute the sdf the original way, one evidence computation per time index (slow; for comparison)"<<endl;
+				cout<<"--virtual-spike, -V: compute everything as the original binsdfc 0.1 does (sdf: one evidence computation per time index; slow, for comparison)"<<endl;
 				//cout<<"--learn-from, -r <num>: learn from the first <num> spiketrains in the data, compute log predictive prob. for the rest "<<endl;
 				cout<<"--marginal-likelihood, -M: return list with log(P(data|M)), for M between 0 and --max-num-bins."<<endl;
 				cout<<"--output-file, -O <filename> write to file instead of stdout."<<endl;

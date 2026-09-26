@@ -8,24 +8,20 @@
  *   (at your option) any later version.                                   *
  ***************************************************************************/
 #include "forwardbackward.h"
-#include <cmath>
-#include <limits>
-#include <algorithm>
 #include "omp.h"
 
 using namespace std;
 
-static const double NEG = -numeric_limits<double>::infinity();
+bool fb::enabled = true;
+using fb::NEG;
+using fb::logSumExp;
 
-/** log(sum_i exp(x_i)) of a small buffer, max-shifted; -inf if all are -inf */
-static inline double logSumExp(const double *x, int n)
+void forwardBackward::forward(int mmax, vector<vector<double> > &fwd)
 {
-	double mx = NEG;
-	for (int i = 0; i < n; i++) mx = fmax(mx, x[i]);
-	if (mx == NEG) return NEG;
-	double s = 0.0;
-	for (int i = 0; i < n; i++) s += exp(x[i] - mx);
-	return mx + log(s);
+	precomputeSubIntervals();
+	const int K = mIntervEnd - mIntervStart;
+	fb::fastForward(K, min(mmax, K - 1),
+			[this](int a, int b) { return mIntervalEvidences[a][b - a]; }, fwd);
 }
 
 void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2,
@@ -40,33 +36,19 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	if (K <= 0 || m1 > m2) return;
 
 	// IEC(a,b): log evidence contribution of the bin a..b (inclusive), prior normalisation excluded
-	auto IEC = [&](int a, int b) -> double { return mIntervalEvidences[a][b - a]; };
+	auto IEC = [this](int a, int b) -> double { return mIntervalEvidences[a][b - a]; };
 
-	// forward: fwd[m][k] = log evidence of 0..k as m+1 bins, the last ending at k (the paper's subE_m[k])
-	vector<vector<double> > fwd(m2 + 1, vector<double>(K, NEG));
-	for (int k = 0; k < K; k++) fwd[0][k] = IEC(0, k);
-	for (int m = 1; m <= m2; m++) {
-		#pragma omp parallel for schedule(guided)
-		for (int k = m; k < K; k++) {
-			vector<double> buf(k - m + 1);
-			for (int r = m - 1; r <= k - 1; r++) buf[r - m + 1] = fwd[m - 1][r] + IEC(r + 1, k);
-			fwd[m][k] = logSumExp(buf.data(), (int)buf.size());
-		}
-	}
+	// forward: fwd[m][k] = log evidence of 0..k as m+1 bins, the last ending at k
+	vector<vector<double> > fwd;
+	fb::fastForward(K, m2, IEC, fwd);
 
-	// backward: bwd[j][k] = log evidence of k+1..K-1 as j+1 bins (k <= K-2)
+	// backward, as the forward iteration on the reversed time axis:
+	// bwd[j][k] = log evidence of k+1..K-1 as j+1 bins = rev[j][K-2-k]
+	vector<vector<double> > rev;
+	fb::fastForward(K, m2, [&](int a, int b) { return IEC(K - 1 - b, K - 1 - a); }, rev);
 	vector<vector<double> > bwd(m2 + 1, vector<double>(K, NEG));
-	for (int k = 0; k <= K - 2; k++) bwd[0][k] = IEC(k + 1, K - 1);
-	for (int j = 1; j <= m2; j++) {
-		#pragma omp parallel for schedule(guided)
-		for (int k = 0; k <= K - 2; k++) {
-			int rmax = K - 2;
-			if (rmax < k + 1) continue;
-			vector<double> buf(rmax - k);
-			for (int r = k + 1; r <= rmax; r++) buf[r - k - 1] = IEC(k + 1, r) + bwd[j - 1][r];
-			bwd[j][k] = logSumExp(buf.data(), (int)buf.size());
-		}
-	}
+	for (int j = 0; j <= m2; j++)
+		for (int k = 0; k <= K - 2; k++) bwd[j][k] = rev[j][K - 2 - k];
 
 	// weights of the models: c[M] = log(P(M|D) / sum_{m1..m2} P) - log E_unnormalised[M]
 	vector<double> ev(logEvidences.begin() + m1, logEvidences.begin() + m2 + 1);
@@ -74,45 +56,67 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	vector<double> c(m2 + 1, NEG);
 	for (int M = m1; M <= m2; M++) c[M] = logEvidences[M] - evSum - fwd[M][K - 1];
 
+	const int NI = m2 + 1;
 	// right messages right_j[b] (tail b+1..K-1 as j bins), folded with the model weights:
-	// R[i][b] = log sum_j c[i+j] * right_j[b]
+	// R[b*NI+i] = log sum_j c[i+j] * right_j[b]; left messages L[a*NI+i] (head 0..a-1 as i bins)
 	auto right = [&](int j, int b) -> double {
 		if (j == 0) return b == K - 1 ? 0.0 : NEG;
 		return b <= K - 2 ? bwd[j - 1][b] : NEG;
 	};
-	vector<vector<double> > R(m2 + 1, vector<double>(K, NEG));
+	vector<double> Rl((size_t)K * NI, NEG), Ll((size_t)K * NI, NEG);
 	#pragma omp parallel for schedule(static)
-	for (int b = 0; b < K; b++) {
-		vector<double> buf(m2 + 1);
-		for (int i = 0; i <= m2; i++) {
+	for (int t = 0; t < K; t++) {
+		vector<double> buf(NI);
+		for (int i = 0; i < NI; i++) {
 			int n = 0;
-			for (int j = 0; i + j <= m2; j++) buf[n++] = c[i + j] + right(j, b);
-			R[i][b] = logSumExp(buf.data(), n);
+			for (int j = 0; i + j <= m2; j++) buf[n++] = c[i + j] + right(j, t);
+			Rl[(size_t)t * NI + i] = logSumExp(buf.data(), n);
+			Ll[(size_t)t * NI + i] = i == 0 ? (t == 0 ? 0.0 : NEG) : (t >= 1 ? fwd[i - 1][t - 1] : NEG);
 		}
 	}
-	auto left = [&](int i, int a) -> double {  // head 0..a-1 as i bins
-		if (i == 0) return a == 0 ? 0.0 : NEG;
-		return a >= 1 ? fwd[i - 1][a - 1] : NEG;
-	};
+	// scaled once: A[a*NI+i] = exp(L - ma[a]), B[b*NI+i] = exp(R - mb[b])
+	vector<double> A((size_t)K * NI), B((size_t)K * NI), ma(K), mb(K);
+	#pragma omp parallel for schedule(static)
+	for (int t = 0; t < K; t++) {
+		double x = NEG, y = NEG;
+		for (int i = 0; i < NI; i++) { x = fmax(x, Ll[(size_t)t * NI + i]); y = fmax(y, Rl[(size_t)t * NI + i]); }
+		ma[t] = x == NEG ? 0.0 : x;
+		mb[t] = y == NEG ? 0.0 : y;
+		for (int i = 0; i < NI; i++) {
+			A[(size_t)t * NI + i] = exp(Ll[(size_t)t * NI + i] - ma[t]);
+			B[(size_t)t * NI + i] = exp(Rl[(size_t)t * NI + i] - mb[t]);
+		}
+	}
 
-	// bins: P([a,b]) * E[f|bin] and * E[f^2|bin], range-added over a..b via difference arrays
+	// bins: W = sum_i A*B * exp(ma+mb+IEC); every term the scaled sum loses is < DBL_MIN, so
+	// W is off by at most NI*DBL_MIN*exp(ma+mb+IEC): where that could exceed tol, redo exactly
+	const double logRisk = log(NI * DBL_MIN) - log(1e-14);
 	const int nthreads = omp_get_max_threads();
 	vector<vector<double> > d1(nthreads, vector<double>(K + 1, 0.0)), d2(nthreads, vector<double>(K + 1, 0.0));
 	#pragma omp parallel
 	{
 		const int tid = omp_get_thread_num();
-		vector<double> lf(m2 + 1), buf(m2 + 1);
+		vector<double> buf(NI);
 		#pragma omp for schedule(guided)
 		for (int a = 0; a < K; a++) {
-			for (int i = 0; i <= m2; i++) lf[i] = left(i, a);
+			const double *Aa = &A[(size_t)a * NI];
 			for (int b = a; b < K; b++) {
-				for (int i = 0; i <= m2; i++) buf[i] = lf[i] + R[i][b];
-				const double lw = logSumExp(buf.data(), m2 + 1);
-				if (lw == NEG) continue;
-				const double w = exp(lw + IEC(a, b));
+				const double *Bb = &B[(size_t)b * NI];
+				double s = 0.0;
+				for (int i = 0; i < NI; i++) s += Aa[i] * Bb[i];
+				const double shift = ma[a] + mb[b] + IEC(a, b);
+				double w;
+				if (shift + logRisk > 0.0) {  // underflow could matter here: exact
+					for (int i = 0; i < NI; i++) buf[i] = Ll[(size_t)a * NI + i] + Rl[(size_t)b * NI + i];
+					const double lw = logSumExp(buf.data(), NI);
+					w = lw == NEG ? 0.0 : exp(lw + IEC(a, b));
+				} else {
+					w = s == 0.0 ? 0.0 : s * exp(shift);
+				}
+				if (w == 0.0) continue;
 				const pair<int, int> &cnt = mIntervalCounts[a][b - a];
-				const double s = cnt.first + mPrior1, n = cnt.first + cnt.second + mPrior1 + mPrior0;
-				const double mean = s / n, second = mean * (s + 1.0) / (n + 1.0);
+				const double sp = cnt.first + mPrior1, n = cnt.first + cnt.second + mPrior1 + mPrior0;
+				const double mean = sp / n, second = mean * (sp + 1.0) / (n + 1.0);
 				d1[tid][a] += w * mean;
 				d1[tid][b + 1] -= w * mean;
 				d2[tid][a] += w * second;

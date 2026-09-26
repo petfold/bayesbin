@@ -1,3 +1,4 @@
+// Modified 2026-09-26: plain evidences via forwardbackward.h (see README.fb.md).
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *
@@ -18,6 +19,7 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 #include "evidencecomputer.h"
+#include "forwardbackward.h"
 #include "logadd.h"
 #include <iostream>
 #include "omp.h"
@@ -158,6 +160,42 @@ void evidenceComputer<AVGFUNC>::test()
 		cout<<"Evidence for m="<<m<<": "<<getEvidence(m)<<endl;
 	cout<<"=== Testing evidencecomputer with data, 3 interval,done ==="<<endl;
 	cout<<"=== Testing evidencecomputer done==="<<endl;
+}
+
+// Modified 2026-09-26: the plain evidences (evifunc) by the matrix-vector central
+// iteration of forwardbackward.h, when the prior is the plain Beta; else as before.
+template<>
+void evidenceComputer<evifunc>::computeEvidences()
+{
+	int K=mIntervEnd-mIntervStart;
+	mEvidences.resize(mMMax+1);
+	if(fb::enabled && mPUB==1.0 && K>0) {
+		vector<vector<double> > fwd;
+		fb::fastForward(K,mMMax,[this](int a,int b){return mIntervalEvidences[a][b-a];},fwd);
+		for(int m=0;m<=mMMax;m++) mEvidences[m]=fwd[m][K-1]+mPriors[m];
+		mSubEvidences=fwd[mMMax];
+		return;
+	}
+	int k,kk,m,lb;
+	mAF.mIP0=mPrior0;
+	mAF.mIP1=mPrior1;
+	mAF.mPUB=mPUB;
+	mAF.init();
+	mSubEvidences.resize(K);
+	m=0;
+	kk=-1;
+	for(k=0;k<K;k++) mSubEvidences[k]=mAF(kk,k,m,mIntervalCounts[0][k],mIntervalEvidences[0][k]);
+	mEvidences[0]=mSubEvidences[K-1]+mPriors[0];	
+	for(m=1;m<=mMMax;m++) {
+		lb=(m==mMMax?K-1:m);
+		for(k=K-1;k>=lb;k--) {
+			mSubEvidences[k]=DBL_LARGE_NEG;
+			for(int kk=m-1;kk<=k-1;kk++) {
+				logAddInstance.add(mSubEvidences[k],mSubEvidences[kk]+mAF(kk,k,m,mIntervalCounts[kk+1][k-kk-1],mIntervalEvidences[kk+1][k-kk-1]));
+			}
+		}
+		mEvidences[m]=mSubEvidences[K-1]+mPriors[m];
+	}
 }
 
 // template instances

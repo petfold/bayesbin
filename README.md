@@ -43,7 +43,7 @@ original program does.
 
 ## Verification
 
-`pytest` (20 tests; 2 need `cpp/binsdfc-fb` built):
+`pytest` (21 tests; 3 need `cpp/binsdfc-fb` built):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -86,15 +86,15 @@ as a process, bayesbin in-process without the import.
 
 | case | binsdfc, 1 core | binsdfc, 4 threads | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | bayesbin, 1 core |
 |---|---|---|---|---|---|
-| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | 0.04 s | 0.03 s | 0.04 s |
-| T=600, M≤10, rate ± sd | 50.0 s | 12.5 s | 0.14 s | 0.11 s | 0.15 s |
-| T=600, M≤10, evidence only | 0.07 s | — | | | 0.08 s |
-| T=2016, M≤30, evidence only | 2.0 s | — | | | 0.69 s |
-| T=2016, M≤30, rate ± sd | stopped after 26 min | | 5.8 s | 3.4 s | 1.5 s |
+| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | | | 0.04 s |
+| T=600, M≤10, rate ± sd | 50.0 s | 12.5 s | 0.07 s | 0.05 s | 0.15 s |
+| T=600, M≤10, evidence only | 0.07 s | — | 0.04 s | 0.04 s | 0.07 s |
+| T=2016, M≤30, evidence only | 2.0 s | — | 0.47 s | 0.36 s | 0.69 s |
+| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.97 s | 0.56 s | 1.5 s |
 
-`binsdfc-fb` is the original with the forward–backward SDF added
-([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)). bayesbin (4 threads) is no
-faster than on 1 core.
+`binsdfc-fb` is the original with the forward–backward SDF and the matrix-vector
+central iteration added ([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)); best
+of 3 runs. bayesbin is no faster on 4 threads than on 1 core.
 
 - The evidences use the same dynamic programme in both, so they take about
   the same time. At T=2016 bayesbin's matrix-vector steps are about 3× faster
