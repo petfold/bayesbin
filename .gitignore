@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 .pytest_cache/
 reference/binsdfc-0.1/binsdfc
+cpp/binsdfc-fb/binsdfc
 reference/binsdfc-0.1/build/

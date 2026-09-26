@@ -222,3 +222,25 @@ def test_fast_dynamic_programmes_equal_the_exact_ones():
         L = model.log_bin_evidence()
         np.testing.assert_allclose(_forward(L, 15), _forward_exact(L, 15), rtol=1e-12)
         np.testing.assert_allclose(_backward(L, 15), _backward(L, 15, exact=True), rtol=1e-12)
+
+
+# --- the forward-backward C++ (cpp/binsdfc-fb), if it has been built -------------------
+
+_FB = Path(__file__).parent.parent / "cpp" / "binsdfc-fb" / "binsdfc"
+
+
+@pytest.mark.skipif(not _FB.exists(), reason="cpp/binsdfc-fb not built (see its README.fb.md)")
+@pytest.mark.parametrize("mass", ["0", "0.9"])
+def test_forward_backward_cpp_matches_bayesbin_and_the_original(mass):
+    import subprocess
+
+    args = [str(_FB), "-s", "-100", "-e", "500", "-m", "10", "-v", "-l", mass, str(DATA / "testdata_seed1.txt")]
+    fb = np.loadtxt(subprocess.run(args, capture_output=True, text=True, check=True).stdout.splitlines())
+    vs = np.loadtxt(subprocess.run([args[0], "-V", *args[1:]], capture_output=True, text=True,
+                                   check=True).stdout.splitlines())
+    orig = np.loadtxt(DATA / f"binsdfc_seed1_sdf_l{mass}.txt")
+    np.testing.assert_allclose(vs[:, 1:3], orig[:, 1:3], rtol=0, atol=0)  # -V is the original path
+    s, g = _seed1()
+    r = fit(BernoulliModel(s, g), 10, m_mass=float(mass))
+    np.testing.assert_allclose(fb[:, 1], r.rate, rtol=6e-6)  # 6 printed digits
+    np.testing.assert_allclose(fb[:, 2], r.rate_std, rtol=6e-6)
