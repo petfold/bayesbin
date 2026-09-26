@@ -130,8 +130,10 @@ to two dimensions.
 - Not yet ported from the original: latency posteriors, signal separation
   levels, hyperparameter optimisation (`-P`), bin-boundary position posteriors
   for a fixed M (`-p`).
-- Planned: cyclic profiles (a bin may wrap round the end of a day or week);
-  2-D via recursive partitions (see [docs/NOTES.md](docs/NOTES.md)).
+- Planned: a release on PyPI, so that `pip install bayesbin` works (steps in
+  [docs/NOTES.md](docs/NOTES.md#plan)); cyclic profiles (a bin may wrap round
+  the end of a day or week); 2-D via recursive partitions (see
+  [docs/NOTES.md](docs/NOTES.md)).
 
 ## Speed against the original
 

@@ -1,5 +1,25 @@
 # Notes
 
+## Plan
+
+1. **Publish on PyPI** as `bayesbin` (the name was free on 2026-09-27), with
+   the `fast` extra (numba). The workflow is in place
+   (`.github/workflows/publish.yml`, trusted publishing, no stored token):
+   - on pypi.org, add a pending trusted publisher: project `bayesbin`, owner
+     `petfold`, repository `bayesbin`, workflow `publish.yml`, environment
+     `pypi` (the operator does this, with their own PyPI account);
+   - check the version in `pyproject.toml`, then `git tag v0.1.0 && git push
+     origin v0.1.0`: the workflow runs the tests, builds, checks and uploads.
+     A version can never be re-uploaded, only yanked;
+   - afterwards: the README's install lines become `pip install bayesbin` /
+     `pip install "bayesbin[fast]"`, and a PyPI badge goes next to the others.
+2. **Cyclic profiles**: a bin may wrap round the end of a day or week.
+3. **Ports from binsdfc**: latency posteriors, signal separation levels,
+   hyperparameter optimisation, boundary position posteriors for a fixed M.
+4. **2-D** via recursive partitions (below: where the method stops being 1-D).
+5. **Threads**: numba `prange` over tiles and columns, to match binsdfc-fb on
+   4 threads.
+
 ## The papers
 
 - D. Endres, M. Oram, J. Schindelin, P. Földiák (2008). *Bayesian binning beats
