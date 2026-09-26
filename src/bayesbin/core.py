@@ -27,6 +27,7 @@ All arithmetic is in log space.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 from scipy.special import gammaln, logsumexp
@@ -37,6 +38,39 @@ _TINY = np.finfo(float).tiny  # smallest normal double: below it a term is lost 
 
 def _log_binom(n: int, k: int) -> float:
     return float(gammaln(n + 1) - gammaln(k + 1) - gammaln(n - k + 1))
+
+
+def _is_integral(x: np.ndarray) -> bool:
+    return bool(np.all(x == np.round(x))) and float(x.sum()) < 2**31 - 1
+
+
+def _bin_totals(x: np.ndarray) -> np.ndarray:
+    """X[a, b] = x[a] + ... + x[b] for a <= b, 0 below the diagonal. int32 when x holds
+    whole numbers (so the totals can index lgamma tables), else float64."""
+    if _is_integral(x):
+        c = np.concatenate([[0], np.cumsum(np.round(x).astype(np.int64))]).astype(np.int32)
+        return np.maximum(c[None, 1:] - c[:-1, None], 0)
+    c = np.concatenate([[0.0], np.cumsum(x)])
+    return np.maximum(c[None, 1:] - c[:-1, None], 0.0)
+
+
+def _bin_lengths(T: int) -> np.ndarray:
+    """N[a, b] = b - a + 1 for a <= b, 0 below the diagonal (int32)."""
+    t = np.arange(T, dtype=np.int32)
+    return np.maximum(t[None, :] - t[:, None] + 1, 0)
+
+
+def _below_diagonal(T: int) -> np.ndarray:
+    t = np.arange(T)
+    return t[:, None] > t[None, :]
+
+
+def _lgamma_at(x: np.ndarray, shift: float) -> np.ndarray:
+    """gammaln(x + shift) elementwise. For integer x it is computed once per distinct
+    value, on a table indexed by x (the same doubles as gammaln on the float sums)."""
+    if x.dtype.kind == "i":
+        return gammaln(np.arange(int(x.max()) + 1) + shift)[x]
+    return gammaln(x + shift)
 
 
 # --- likelihoods ------------------------------------------------------------------
@@ -67,25 +101,29 @@ class BernoulliModel:
     def T(self) -> int:
         return len(self.s)
 
+    @cached_property
     def _sums(self) -> tuple[np.ndarray, np.ndarray]:
-        """S[a, b], G[a, b]: totals over intervals a..b (inclusive), a <= b."""
-        cs = np.concatenate([[0.0], np.cumsum(self.s)])
-        cg = np.concatenate([[0.0], np.cumsum(self.g)])
-        return cs[None, 1:] - cs[:-1, None], cg[None, 1:] - cg[:-1, None]
+        """S[a, b], G[a, b]: totals over intervals a..b (inclusive), 0 below the diagonal;
+        computed once, shared by log_bin_evidence and bin_moments."""
+        return _bin_totals(self.s), _bin_totals(self.g)
 
     def log_bin_evidence(self) -> np.ndarray:
         """L[a, b] = log ∫ Π_{k=a..b} f^s (1-f)^g Beta(f; σ, γ) df; -inf below the diagonal."""
-        S, G = self._sums()
-        S, G = np.maximum(S, 0.0), np.maximum(G, 0.0)  # below the diagonal: masked next
+        S, G = self._sums
         a, c = self.sigma, self.gamma
-        L = (gammaln(S + a) + gammaln(G + c) - gammaln(S + G + a + c)
-             + gammaln(a + c) - gammaln(a) - gammaln(c))
-        return np.where(np.triu(np.ones_like(L, bool)), L, _NEG_INF)
+        if S.dtype.kind == "i" and G.dtype.kind == "i":
+            L = _lgamma_at(S, a) + _lgamma_at(G, c) - _lgamma_at(S + G, a + c)
+        else:
+            L = gammaln(S + a) + gammaln(G + c) - gammaln(S + G + a + c)
+        L += gammaln(a + c)  # added in this order: the same doubles as a left-to-right sum
+        L -= gammaln(a)
+        L -= gammaln(c)
+        L[_below_diagonal(self.T)] = _NEG_INF
+        return L
 
     def bin_moments(self) -> tuple[np.ndarray, np.ndarray]:
         """Posterior E[f] and E[f²] of every bin [a, b]."""
-        S, G = self._sums()
-        S, G = np.maximum(S, 0.0), np.maximum(G, 0.0)
+        S, G = self._sums
         a, n = S + self.sigma, S + G + self.sigma + self.gamma
         return a / n, a * (a + 1) / (n * (n + 1))
 
@@ -129,24 +167,40 @@ class PoissonModel:
     def T(self) -> int:
         return len(self.y)
 
+    @cached_property
     def _sums(self) -> tuple[np.ndarray, np.ndarray]:
-        cy = np.concatenate([[0.0], np.cumsum(self.y)])
-        ce = np.concatenate([[0.0], np.cumsum(self.e)])
-        return cy[None, 1:] - cy[:-1, None], ce[None, 1:] - ce[:-1, None]
+        """Y[a, b] (counts) and E[a, b] (exposures) over a..b, 0 below the diagonal;
+        computed once. With a constant exposure e0, E = e0 * (bin length)."""
+        e0 = self.e[0]
+        if np.all(self.e == e0) and e0 == 1.0:
+            E = _bin_lengths(self.T)  # the default exposure: integer totals, exact
+        elif np.all(self.e == e0):
+            E = e0 * _bin_lengths(self.T)
+        else:
+            E = _bin_totals(self.e).astype(float)
+        return _bin_totals(self.y), E
+
+    def _log_e_plus_beta(self, E: np.ndarray) -> np.ndarray:
+        """log(E + β); per bin length when the exposure is constant (a table)."""
+        e0 = self.e[0]
+        if np.all(self.e == e0):
+            n = _bin_lengths(self.T) if E.dtype.kind != "i" else E
+            return np.log(e0 * np.arange(self.T + 1) + self.beta)[n]
+        return np.log(E + self.beta)
 
     def log_bin_evidence(self) -> np.ndarray:
         """L[a, b] = log ∫ Π λ^y e^{-λe} Gamma(λ; α, β) dλ, without the data-only
         factor Π e^y / y! (see log_data_constant)."""
-        Y, E = self._sums()
-        Y, E = np.maximum(Y, 0.0), np.maximum(E, 0.0)
+        Y, E = self._sums
         a, b = self.alpha, self.beta
-        with np.errstate(invalid="ignore"):
-            L = a * np.log(b) - gammaln(a) + gammaln(Y + a) - (Y + a) * np.log(E + b)
-        return np.where(np.triu(np.ones_like(L, bool)), L, _NEG_INF)
+        L = (a * np.log(b) - gammaln(a)) + _lgamma_at(Y, a)
+        L -= (Y + a) * self._log_e_plus_beta(E)
+        L[_below_diagonal(self.T)] = _NEG_INF
+        return L
 
     def bin_moments(self) -> tuple[np.ndarray, np.ndarray]:
-        Y, E = self._sums()
-        a, b = np.maximum(Y, 0.0) + self.alpha, np.maximum(E, 0.0) + self.beta
+        Y, E = self._sums
+        a, b = Y + self.alpha, E + self.beta
         return a / b, a * (a + 1) / b**2
 
     def log_data_constant(self) -> float:
