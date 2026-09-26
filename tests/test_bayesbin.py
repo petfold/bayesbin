@@ -281,3 +281,39 @@ def test_forward_backward_cpp_boundary_moments_match_their_posterior():
         sd = np.sqrt((p * (k - mean) ** 2).sum())
         assert moments[j, 1] == pytest.approx(mean, rel=1e-5)
         assert moments[j, 2] == pytest.approx(sd, rel=2e-5)
+
+
+# --- the block-wise path (the default: no T×T arrays) against the full-matrix one -------
+
+
+@pytest.mark.parametrize("mass", [None, 0.0, 0.9])
+def test_block_wise_fit_equals_the_exact_full_matrix_fit(mass):
+    rng = np.random.default_rng(12)
+    e = rng.uniform(0.5, 2.0, 500)
+    for model in (_strong_poisson(), BernoulliModel(*_seed1()),
+                  PoissonModel.weak_prior(rng.poisson(3.0 * e).astype(float), e)):  # varying exposure
+        blocks = fit(model, 12, m_mass=mass)  # default: block by block
+        ref = fit(model, 12, m_mass=mass, exact=True)
+        np.testing.assert_allclose(blocks.log_evidence, ref.log_evidence, rtol=1e-12)
+        np.testing.assert_allclose(blocks.rate, ref.rate, rtol=1e-10)
+        np.testing.assert_allclose(blocks.rate_std, ref.rate_std, rtol=1e-6)
+        np.testing.assert_allclose(blocks.boundary_posterior, ref.boundary_posterior, atol=1e-12)
+
+
+def test_forward_backward_from_a_model_equal_those_from_its_matrix():
+    from bayesbin.core import _backward, _forward
+
+    for model in (_strong_poisson(T=300), BernoulliModel(*_seed1())):
+        L = model.log_bin_evidence()
+        np.testing.assert_array_equal(_forward(model, 10), _forward(L, 10))
+        np.testing.assert_array_equal(_backward(model, 10), _backward(L, 10))
+
+
+def test_bin_block_tiles_the_full_matrices():
+    model = BernoulliModel(*_seed1())
+    L, (m1, m2) = model.log_bin_evidence(), model.bin_moments()
+    Lb, m1b, m2b = model.bin_block(100, 180, 150, 400, moments=True)
+    np.testing.assert_array_equal(Lb, L[100:180, 150:400])
+    up = np.isfinite(Lb)
+    np.testing.assert_array_equal(m1b[up], m1[100:180, 150:400][up])
+    np.testing.assert_array_equal(m2b[up], m2[100:180, 150:400][up])

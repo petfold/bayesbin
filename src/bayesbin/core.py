@@ -44,36 +44,53 @@ def _is_integral(x: np.ndarray) -> bool:
     return bool(np.all(x == np.round(x))) and float(x.sum()) < 2**31 - 1
 
 
-def _bin_totals(x: np.ndarray) -> np.ndarray:
-    """X[a, b] = x[a] + ... + x[b] for a <= b, 0 below the diagonal. int32 when x holds
-    whole numbers (so the totals can index lgamma tables), else float64."""
+def _prefix(x: np.ndarray) -> np.ndarray:
+    """c[0] = 0, c[k+1] = x[0] + ... + x[k]; int64 when x holds whole numbers (so bin
+    totals can index lgamma tables), else float64."""
     if _is_integral(x):
-        c = np.concatenate([[0], np.cumsum(np.round(x).astype(np.int64))]).astype(np.int32)
-        return np.maximum(c[None, 1:] - c[:-1, None], 0)
-    c = np.concatenate([[0.0], np.cumsum(x)])
-    return np.maximum(c[None, 1:] - c[:-1, None], 0.0)
+        return np.concatenate([[0], np.cumsum(np.round(x).astype(np.int64))])
+    return np.concatenate([[0.0], np.cumsum(x)])
 
 
-def _bin_lengths(T: int) -> np.ndarray:
-    """N[a, b] = b - a + 1 for a <= b, 0 below the diagonal (int32)."""
-    t = np.arange(T, dtype=np.int32)
-    return np.maximum(t[None, :] - t[:, None] + 1, 0)
+def _block_totals(c: np.ndarray, a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
+    """X[a, b] = x[a] + ... + x[b] for a in [a0, a1), b in [b0, b1); 0 where a > b.
+    int32 for whole numbers, else float64."""
+    X = c[None, b0 + 1:b1 + 1] - c[a0:a1, None]
+    if X.dtype.kind == "i":
+        X = X.astype(np.int32)
+    return np.maximum(X, 0)
 
 
-def _below_diagonal(T: int) -> np.ndarray:
-    t = np.arange(T)
-    return t[:, None] > t[None, :]
+def _block_lengths(a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
+    """N[a, b] = b - a + 1, 0 where a > b (int32)."""
+    return np.maximum(np.arange(b0, b1, dtype=np.int32)[None, :] - np.arange(a0, a1, dtype=np.int32)[:, None] + 1, 0)
 
 
-def _lgamma_at(x: np.ndarray, shift: float) -> np.ndarray:
-    """gammaln(x + shift) elementwise. For integer x it is computed once per distinct
-    value, on a table indexed by x (the same doubles as gammaln on the float sums)."""
-    if x.dtype.kind == "i":
-        return gammaln(np.arange(int(x.max()) + 1) + shift)[x]
-    return gammaln(x + shift)
+def _block_below(a0: int, a1: int, b0: int, b1: int) -> np.ndarray:
+    return np.arange(a0, a1)[:, None] > np.arange(b0, b1)[None, :]
+
+
+class _Table:
+    """gammaln(n + shift) for n = 0..N, extended on demand (1-D, cached)."""
+
+    def __init__(self, shift: float):
+        self.shift, self.v = shift, np.empty(0)
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        if x.dtype.kind != "i":
+            return gammaln(x + self.shift)
+        top = int(x.max()) + 1 if x.size else 1
+        if top > len(self.v):
+            self.v = gammaln(np.arange(max(top, 2 * len(self.v))) + self.shift)
+        return self.v[x]
 
 
 # --- likelihoods ------------------------------------------------------------------
+#
+# Each model gives its bin evidences and posterior moments block by block,
+# bin_block(a0, a1, b0, b1) for bins [a, b] with a0 <= a < a1, b0 <= b < b1, from
+# prefix sums and lgamma tables: no T×T array is needed. log_bin_evidence() and
+# bin_moments() are the whole matrices, for small problems and for tests.
 
 
 @dataclass(frozen=True)
@@ -102,30 +119,34 @@ class BernoulliModel:
         return len(self.s)
 
     @cached_property
-    def _sums(self) -> tuple[np.ndarray, np.ndarray]:
-        """S[a, b], G[a, b]: totals over intervals a..b (inclusive), 0 below the diagonal;
-        computed once, shared by log_bin_evidence and bin_moments."""
-        return _bin_totals(self.s), _bin_totals(self.g)
+    def _pre(self):
+        """prefix sums of s and g, and the lgamma tables (all 1-D)."""
+        a, c = self.sigma, self.gamma
+        return (_prefix(self.s), _prefix(self.g), _Table(a), _Table(c), _Table(a + c),
+                gammaln(a + c), gammaln(a), gammaln(c))
+
+    def bin_block(self, a0: int, a1: int, b0: int, b1: int, moments: bool = False):
+        """L[a, b] = log ∫ Π_{k=a..b} f^s (1-f)^g Beta(f; σ, γ) df (-inf where a > b) for
+        a in [a0, a1), b in [b0, b1); with moments=True also E[f] and E[f²] of each bin."""
+        cs, cg, tA, tB, tC, kAC, kA, kC = self._pre
+        S, G = _block_totals(cs, a0, a1, b0, b1), _block_totals(cg, a0, a1, b0, b1)
+        L = tA(S) + tB(G) - tC(S + G)
+        L += kAC  # added in this order: the same doubles as a left-to-right sum
+        L -= kA
+        L -= kC
+        L[_block_below(a0, a1, b0, b1)] = _NEG_INF
+        if not moments:
+            return L
+        a, n = S + self.sigma, S + G + self.sigma + self.gamma
+        return L, a / n, a * (a + 1) / (n * (n + 1))
 
     def log_bin_evidence(self) -> np.ndarray:
-        """L[a, b] = log ∫ Π_{k=a..b} f^s (1-f)^g Beta(f; σ, γ) df; -inf below the diagonal."""
-        S, G = self._sums
-        a, c = self.sigma, self.gamma
-        if S.dtype.kind == "i" and G.dtype.kind == "i":
-            L = _lgamma_at(S, a) + _lgamma_at(G, c) - _lgamma_at(S + G, a + c)
-        else:
-            L = gammaln(S + a) + gammaln(G + c) - gammaln(S + G + a + c)
-        L += gammaln(a + c)  # added in this order: the same doubles as a left-to-right sum
-        L -= gammaln(a)
-        L -= gammaln(c)
-        L[_below_diagonal(self.T)] = _NEG_INF
-        return L
+        """The whole T×T matrix of bin_block (-inf below the diagonal)."""
+        return self.bin_block(0, self.T, 0, self.T)
 
     def bin_moments(self) -> tuple[np.ndarray, np.ndarray]:
-        """Posterior E[f] and E[f²] of every bin [a, b]."""
-        S, G = self._sums
-        a, n = S + self.sigma, S + G + self.sigma + self.gamma
-        return a / n, a * (a + 1) / (n * (n + 1))
+        """Posterior E[f] and E[f²] of every bin [a, b] (T×T)."""
+        return self.bin_block(0, self.T, 0, self.T, moments=True)[1:]
 
     def log_data_constant(self) -> float:
         return 0.0  # the Bernoulli sequence likelihood has no data-only factor
@@ -168,40 +189,42 @@ class PoissonModel:
         return len(self.y)
 
     @cached_property
-    def _sums(self) -> tuple[np.ndarray, np.ndarray]:
-        """Y[a, b] (counts) and E[a, b] (exposures) over a..b, 0 below the diagonal;
-        computed once. With a constant exposure e0, E = e0 * (bin length)."""
+    def _pre(self):
+        """prefix sums, the gammaln(y + α) table, and log(E + β) per bin length when the
+        exposure is constant (e0; None otherwise)."""
         e0 = self.e[0]
-        if np.all(self.e == e0) and e0 == 1.0:
-            E = _bin_lengths(self.T)  # the default exposure: integer totals, exact
-        elif np.all(self.e == e0):
-            E = e0 * _bin_lengths(self.T)
-        else:
-            E = _bin_totals(self.e).astype(float)
-        return _bin_totals(self.y), E
+        const = bool(np.all(self.e == e0))
+        logE = np.log(e0 * np.arange(self.T + 1) + self.beta) if const else None
+        ce = None if const else np.concatenate([[0.0], np.cumsum(self.e)])
+        return (_prefix(self.y), ce, e0 if const else None, logE, _Table(self.alpha),
+                self.alpha * np.log(self.beta) - gammaln(self.alpha))
 
-    def _log_e_plus_beta(self, E: np.ndarray) -> np.ndarray:
-        """log(E + β); per bin length when the exposure is constant (a table)."""
-        e0 = self.e[0]
-        if np.all(self.e == e0):
-            n = _bin_lengths(self.T) if E.dtype.kind != "i" else E
-            return np.log(e0 * np.arange(self.T + 1) + self.beta)[n]
-        return np.log(E + self.beta)
+    def bin_block(self, a0: int, a1: int, b0: int, b1: int, moments: bool = False):
+        """L[a, b] = log ∫ Π λ^y e^{-λe} Gamma(λ; α, β) dλ (-inf where a > b), without the
+        data-only factor Π e^y / y! (see log_data_constant); with moments=True also
+        E[λ] and E[λ²] of each bin."""
+        cy, ce, e0, logE, tY, k0 = self._pre
+        Y = _block_totals(cy, a0, a1, b0, b1)
+        if e0 is not None:
+            n = _block_lengths(a0, a1, b0, b1)
+            E, lE = (n if e0 == 1.0 else e0 * n), logE[n]
+        else:
+            E = _block_totals(ce, a0, a1, b0, b1).astype(float)
+            lE = np.log(E + self.beta)
+        L = k0 + tY(Y)
+        L -= (Y + self.alpha) * lE
+        L[_block_below(a0, a1, b0, b1)] = _NEG_INF
+        if not moments:
+            return L
+        a, b = Y + self.alpha, E + self.beta
+        return L, a / b, a * (a + 1) / b**2
 
     def log_bin_evidence(self) -> np.ndarray:
-        """L[a, b] = log ∫ Π λ^y e^{-λe} Gamma(λ; α, β) dλ, without the data-only
-        factor Π e^y / y! (see log_data_constant)."""
-        Y, E = self._sums
-        a, b = self.alpha, self.beta
-        L = (a * np.log(b) - gammaln(a)) + _lgamma_at(Y, a)
-        L -= (Y + a) * self._log_e_plus_beta(E)
-        L[_below_diagonal(self.T)] = _NEG_INF
-        return L
+        """The whole T×T matrix of bin_block (-inf below the diagonal)."""
+        return self.bin_block(0, self.T, 0, self.T)
 
     def bin_moments(self) -> tuple[np.ndarray, np.ndarray]:
-        Y, E = self._sums
-        a, b = Y + self.alpha, E + self.beta
-        return a / b, a * (a + 1) / b**2
+        return self.bin_block(0, self.T, 0, self.T, moments=True)[1:]
 
     def log_data_constant(self) -> float:
         pos = self.y > 0
@@ -209,6 +232,18 @@ class PoissonModel:
 
 
 # --- the dynamic programmes ---------------------------------------------------------
+
+
+def _blocks(ev):
+    """(T, block(a0, a1, b0, b1)) for a T×T array of bin evidences or a model."""
+    if isinstance(ev, np.ndarray):
+        return ev.shape[0], lambda a0, a1, b0, b1: ev[a0:a1, b0:b1]
+    return ev.T, ev.bin_block
+
+
+def _reversed_blocks(T: int, block):
+    """The bin evidences of the reversed sequence, L_rev[a, b] = L[T-1-b, T-1-a], by block."""
+    return lambda a0, a1, b0, b1: block(T - b1, T - b0, T - a1, T - a0)[::-1, ::-1].T
 
 
 def _forward_exact(L: np.ndarray, max_m: int) -> np.ndarray:
@@ -225,7 +260,7 @@ def _forward_exact(L: np.ndarray, max_m: int) -> np.ndarray:
     return fwd
 
 
-def _forward(L: np.ndarray, max_m: int, *, tol: float = 1e-13, block: int = 256) -> np.ndarray:
+def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int = 256, _blk=None) -> np.ndarray:
     """fwd[m, k] as in _forward_exact, in blocks of columns.
 
     Relative to the one-bin evidence b[k] = L[0, k], a step is
@@ -238,10 +273,13 @@ def _forward(L: np.ndarray, max_m: int, *, tol: float = 1e-13, block: int = 256)
     scales exp(φ) by its maximum over those rows (per block: consistent within
     each column's sum). A term lost to underflow is below the smallest normal
     double, so a column whose sum is not far above T·TINY could be off by more
-    than `tol` (relative); those columns are recomputed exactly."""
-    T = L.shape[0]
+    than `tol` (relative); those columns are recomputed exactly.
+
+    `ev` is a T×T array of bin evidences or a model (its bin_block is used: no
+    T×T array at all)."""
+    T, blk = _blocks(ev) if _blk is None else _blk
     fwd = np.full((max_m + 1, T), _NEG_INF)
-    b = L[0].copy()
+    b = np.array(blk(0, 1, 0, T)[0], dtype=float)
     fwd[0] = b
     if max_m == 0 or T == 1:
         return fwd
@@ -254,7 +292,7 @@ def _forward(L: np.ndarray, max_m: int, *, tol: float = 1e-13, block: int = 256)
         if nr <= 0:
             continue
         # G[r, k] = L[r+1, k] - b[k] + b[r]; -inf where r >= k (L is -inf below its diagonal)
-        G = L[1:k1, k0:k1] - b[None, k0:k1] + b[:nr, None]
+        G = blk(1, k1, k0, k1) - b[None, k0:k1] + b[:nr, None]
         c = G.max(axis=0)
         c[~np.isfinite(c)] = 0.0
         E = np.exp(G - c)
@@ -277,12 +315,16 @@ def _forward(L: np.ndarray, max_m: int, *, tol: float = 1e-13, block: int = 256)
     return fwd
 
 
-def _backward(L: np.ndarray, max_m: int, *, exact: bool = False) -> np.ndarray:
+def _backward(ev, max_m: int, *, exact: bool = False) -> np.ndarray:
     """bwd[j, k]: log evidence of intervals k+1..T-1 as j+1 bins (k < T-1): the
-    forward programme on the reversed sequence."""
-    T = L.shape[0]
-    L_rev = L[::-1, ::-1].T  # L_rev[a, b] = L[T-1-b, T-1-a]
-    f = (_forward_exact if exact else _forward)(L_rev, max_m)
+    forward programme on the reversed sequence. `ev`: a T×T array or a model
+    (exact=True needs the array)."""
+    if exact:
+        T = ev.shape[0]
+        f = _forward_exact(ev[::-1, ::-1].T, max_m)  # L_rev[a, b] = L[T-1-b, T-1-a]
+    else:
+        T, blk = _blocks(ev)
+        f = _forward(None, max_m, _blk=(T, _reversed_blocks(T, blk)))
     bwd = np.full((max_m + 1, T), _NEG_INF)
     bwd[:, :-1] = f[:, T - 2::-1]  # bwd[j, k] = f[j, T-2-k]
     return bwd
@@ -379,6 +421,54 @@ def _cover_sum(Q: np.ndarray) -> np.ndarray:
     return np.diagonal(R).copy()
 
 
+def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
+              tol: float = 1e-14, tile_a: int = 256, tile_b: int = 1024):
+    """E[f_k | D], E[f_k² | D] and P(a bin ends at k | D) straight from the bin
+    posterior, tile by tile: no T×T array.
+
+    As in bin_posterior, W[a, b] = Σ_i exp(left_i[a] + L[a, b] + R_i[b]) with the
+    average over M folded into R, as a scaled matrix product per tile of
+    (tile_a bin starts) × (tile_b bin ends); entries where underflow could cost
+    more than `tol` are recomputed in log space. Each tile adds its W·E[f | bin]
+    over the bins' ranges a..b through difference arrays: its row sums at a, its
+    column sums (negated) at b + 1."""
+    T, K = model.T, len(log_c)
+    left, right = _messages(fwd, bwd, K)
+    R = np.full((K, T), _NEG_INF)
+    for i in range(K):
+        j = np.arange(K - i)
+        R[i] = logsumexp(log_c[i + j][:, None] + right[j], axis=0)
+    ma, mb = left.max(axis=0), R.max(axis=0)
+    ma[~np.isfinite(ma)] = 0.0
+    mb[~np.isfinite(mb)] = 0.0
+    A, B = np.exp(left - ma).T, np.exp(R - mb)  # (T, K), (K, T)
+    d1, d2, ends = np.zeros(T + 1), np.zeros(T + 1), np.zeros(T)
+    log_risk = np.log(K * _TINY) - np.log(max(tol, _TINY))
+    for a0 in range(0, T, tile_a):
+        a1 = min(T, a0 + tile_a)
+        for b0 in range(a0, T, tile_b):
+            b1 = min(T, b0 + tile_b)
+            L, m1, m2 = model.bin_block(a0, a1, b0, b1, moments=True)
+            S = A[a0:a1] @ B[:, b0:b1]
+            shift = ma[a0:a1, None] + mb[None, b0:b1]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                C = np.log(S) + shift
+                risk = log_risk + shift + L > 0.0
+            if risk.any():
+                aa, bb = np.nonzero(risk)
+                C[aa, bb] = logsumexp(left[:, a0 + aa] + R[:, b0 + bb], axis=0)
+            with np.errstate(invalid="ignore", over="ignore"):
+                W = np.exp(C + L)
+            W = np.nan_to_num(W, nan=0.0, posinf=0.0)
+            q1, q2 = W * m1, W * m2
+            d1[a0:a1] += q1.sum(axis=1)
+            d2[a0:a1] += q2.sum(axis=1)
+            d1[b0 + 1:b1 + 1] -= q1.sum(axis=0)
+            d2[b0 + 1:b1 + 1] -= q2.sum(axis=0)
+            ends[b0:b1] += W.sum(axis=0)
+    return np.cumsum(d1)[:T], np.cumsum(d2)[:T], ends[:T - 1]
+
+
 def credible_m_range(log_evidence: np.ndarray, mass: float) -> tuple[int, int]:
     """The smallest interval of M around the most probable one holding at least
     `mass` posterior probability, grown toward the more probable neighbour
@@ -410,11 +500,15 @@ def fit(model, max_boundaries: int = 10, *, m_mass: float | None = None,
     in the bin posterior -- see _forward and bin_posterior)."""
     T = model.T
     max_m = min(max_boundaries, T - 1)
-    L = model.log_bin_evidence()
-    if exact:
-        fwd, bwd = _forward_exact(L, max_m), _backward(L, max_m, exact=True)
-    else:
-        fwd, bwd = _forward(L, max_m), _backward(L, max_m)
+    full = exact or keep_bins  # the T×T path: the reference, or the full bin posterior kept
+    if full:
+        L = model.log_bin_evidence()
+        if exact:
+            fwd, bwd = _forward_exact(L, max_m), _backward(L, max_m, exact=True)
+        else:
+            fwd, bwd = _forward(L, max_m), _backward(L, max_m)
+    else:  # block by block from the model: O(T·M) memory
+        fwd, bwd = _forward(model, max_m), _backward(model, max_m)
     log_ev = np.array([fwd[m, T - 1] - _log_binom(T - 1, m) for m in range(max_m + 1)])
     log_ev += model.log_data_constant()
     post = np.exp(log_ev - logsumexp(log_ev))
@@ -424,14 +518,18 @@ def fit(model, max_boundaries: int = 10, *, m_mass: float | None = None,
         lo, hi = credible_m_range(log_ev, m_mass)
         use = np.zeros_like(use)
         use[lo:hi + 1] = True
-    mean, second = model.bin_moments()
     with np.errstate(divide="ignore"):
         log_c = np.where(use, np.log(post / post[use].sum()), _NEG_INF) - fwd[:, T - 1]
-    W = bin_posterior(L, fwd, bwd, log_c, exact=exact)
-
-    rate = _cover_sum(W * np.nan_to_num(mean))
-    var = np.clip(_cover_sum(W * np.nan_to_num(second)) - rate**2, 0.0, None)
-    boundary = W[:, :-1].sum(axis=0)  # bins ending at b < T-1
+    if full:
+        mean, second = model.bin_moments()
+        W = bin_posterior(L, fwd, bwd, log_c, exact=exact)
+        rate = _cover_sum(W * np.nan_to_num(mean))
+        ef2 = _cover_sum(W * np.nan_to_num(second))
+        boundary = W[:, :-1].sum(axis=0)  # bins ending at b < T-1
+    else:
+        rate, ef2, boundary = _bin_sums(model, fwd, bwd, log_c)
+        W = None
+    var = np.clip(ef2 - rate**2, 0.0, None)
     return BinningResult(log_ev, post, rate, np.sqrt(var), boundary, W if keep_bins else None)
 
 

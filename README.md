@@ -64,11 +64,14 @@ original program does.
 
 ## Status and limits
 
-- Cost: O(M·T²) time and O(T²) memory. The forward and backward programmes
-  run in blocks of 256 columns: each block's slice of exponentiated gains is
-  made once, from the upper triangle only, and serves all M steps as
-  matrix–vector products; the bin posterior is one matrix product. The peak
-  memory is still set by T×T arrays (bin evidences, moments, bin posterior). Wherever underflow could cost
+- Cost: O(M·T²) time, O(T·M) memory. Nothing of size T×T is formed on the
+  default path: the models give bin evidences and posterior moments block by
+  block (`bin_block`, from prefix sums and `lgamma` tables); the forward and
+  backward programmes run in blocks of 256 columns, each block's slice of
+  exponentiated gains made once from the upper triangle and serving all M
+  steps; the bin posterior is accumulated in tiles of 256 × 1024 bins, as
+  scaled matrix products, into the rates and the boundary posterior.
+  `keep_bins=True` (the whole bin posterior) and `exact=True` use T×T arrays. Wherever underflow could cost
   more than 10⁻¹³ (relative, evidences) or 10⁻¹⁴ (absolute, bin posterior),
   that entry is recomputed exactly in log space, and `exact=True` does
   everything that way. See the timings below.
@@ -120,17 +123,18 @@ check put the previous build about 2× slower than in its own earlier runs too).
 
 | T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin, 1 core |
 |---|---|---|---|---|---|
-| 2016 (1 week) | 30 | 0.27 s | 0.09 s | 12 MB | |
-| 4032 (2 weeks) | 30 | | | | 6.0 s, 1.1 GB |
+| 2016 (1 week) | 30 | 0.27 s | 0.09 s | 12 MB | 0.73 s, 97 MB |
+| 4032 (2 weeks) | 60 | | | | 3.6 s, 113 MB |
 | 4032 | 120 | 2.4 s | 0.89 s | 25 MB | |
-| 8064 (4 weeks) | 120 | 9.5 s | 3.0 s | 44 MB | (≈5 GB: not run) |
-| 12096 (6 weeks) | 120 | 20.4 s | 6.4 s | 61 MB | |
+| 8064 (4 weeks) | 120 | 9.5 s | 3.0 s | 44 MB | 25.7 s, 175 MB |
+| 12096 (6 weeks) | 120 | 20.4 s | 6.4 s | 61 MB | 59.5 s, 247 MB |
 | 24192 (12 weeks) | 120 | | 86 s | 116 MB | |
 
 - binsdfc-fb memory is O(T·M): no T×T array is kept. (Before: ≈14·T²
   bytes, 2.1 GB at 6 weeks; 12 weeks would have needed ≈8 GB.) Output is
-  byte-identical to the T² version at 2 and 6 weeks. bayesbin still keeps
-  T×T arrays (≈70·T² bytes).
+  byte-identical to the T² version at 2 and 6 weeks. bayesbin is O(T·M) too
+  now (its figures include ≈60 MB of Python and NumPy); before, ≈70·T² bytes
+  (1.1 GB at 2 weeks).
 - Time grows about as T² and linearly in M; the original needs 8.5 s for the
   evidences alone at T=4032.
 - binsdfc-fb and bayesbin agree to the 6 printed digits at T=4032.
