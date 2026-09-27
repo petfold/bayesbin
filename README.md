@@ -1,7 +1,7 @@
 # bayesbin
 
 [![tests](https://github.com/petfold/bayesbin/actions/workflows/tests.yml/badge.svg)](https://github.com/petfold/bayesbin/actions/workflows/tests.yml)
-[![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+[![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/petfold/bayesbin/blob/main/LICENSE)
 [![status](https://img.shields.io/badge/status-beta-yellow)](#status-and-limits)
 
 Exact Bayesian binning of rates in NumPy/SciPy, after
@@ -9,7 +9,7 @@ Exact Bayesian binning of rates in NumPy/SciPy, after
 > D. Endres, M. Oram, J. Schindelin, P. Földiák (2008). *Bayesian binning beats
 > approximate alternatives: estimating peri-stimulus time histograms.*
 > Advances in Neural Information Processing Systems 20, 393–400. MIT Press.
-> ([NeurIPS page](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html); a copy in [paper/](paper/))
+> ([NeurIPS page](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html); a copy in [paper/](https://github.com/petfold/bayesbin/tree/main/paper))
 
 A rate on T ordered intervals is modelled as piecewise constant with M bin
 boundaries. Boundary positions, per-bin rates (conjugate priors) and M itself
@@ -17,6 +17,11 @@ are all integrated out exactly: one forward dynamic programme gives the
 evidence of every M in O(M·T²). A matching backward programme gives the
 posterior of every candidate bin at once, from which the predictive rate, its
 error bars and the posterior over boundary positions follow.
+
+**New to this? Start with the [User Guide](https://github.com/petfold/bayesbin/blob/main/docs/USER_GUIDE.md)**: why fixed-width
+bins mislead, the assumptions in plain words, four worked examples (spike
+trains, counts with exposure, success rates, a daily profile) and the pitfalls.
+For AI coding assistants there is a compact [llms.txt](https://github.com/petfold/bayesbin/blob/main/llms.txt).
 
 ```sh
 pip install "bayesbin @ git+https://github.com/petfold/bayesbin"          # NumPy/SciPy only
@@ -83,7 +88,7 @@ which finds the single best segmentation under a penalty per block, this
 averages over all segmentations, so the rate is smooth where the data do not
 decide where a step is, and comes with error bars.
 
-The axis is 1-D; see [docs/NOTES.md](docs/NOTES.md) for how far this extends
+The axis is 1-D; see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md) for how far this extends
 to two dimensions.
 
 ## Models
@@ -97,9 +102,9 @@ to two dimensions.
 
 ## Verification
 
-`pytest` (40 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
+`pytest` (41 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
-- **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
+- **Against the original C++ program** (`binsdfc` 0.1, in [reference/](https://github.com/petfold/bayesbin/tree/main/reference)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
   - log P(D | M) for M = 0..10 and the marginal likelihood agree to every
     printed digit;
@@ -122,6 +127,7 @@ to two dimensions.
   coverage, the posterior of the bins covering each interval, which is 1 in
   exact arithmetic; its rounding error would otherwise reach the sd amplified
   by rate²/var.)
+- The User Guide's examples run and print what the guide says they print.
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.
 
@@ -147,9 +153,9 @@ to two dimensions.
   levels, hyperparameter optimisation (`-P`), bin-boundary position posteriors
   for a fixed M (`-p`).
 - Planned: a release on PyPI, so that `pip install bayesbin` works (steps in
-  [docs/NOTES.md](docs/NOTES.md#plan)); cyclic profiles (a bin may wrap round
+  [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)); cyclic profiles (a bin may wrap round
   the end of a day or week); 2-D via recursive partitions (see
-  [docs/NOTES.md](docs/NOTES.md)).
+  [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md)).
 
 ## Speed against the original
 
@@ -171,7 +177,7 @@ process).
 | T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s | 0.099 s |
 
 `binsdfc-fb` is the original with the forward–backward SDF, the matrix-vector
-central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)); best
+central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](https://github.com/petfold/bayesbin/blob/main/cpp/binsdfc-fb/README.fb.md)); best
 of 5 runs. (binsdfc itself always runs 4 threads.)
 
 - The evidences use the same dynamic programme in both. binsdfc's triple loop
@@ -222,18 +228,18 @@ run each; the laptop was thermally throttled.
 
 Two licences, by directory:
 
-- **BSD-3-Clause** ([LICENSE](LICENSE)): the Python package `src/bayesbin` (all
+- **BSD-3-Clause** ([LICENSE](https://github.com/petfold/bayesbin/blob/main/LICENSE)): the Python package `src/bayesbin` (all
   that `pip` installs), its tests, `tools/bench_vs_binsdfc.py` and the
   documentation. The package was written from the paper; the C++ program was
   used only as a reference to test against, and none of its code is in it.
-- **GPL-2.0-or-later**: [reference/binsdfc-0.1/](reference/) (Dominik Endres's
-  original, unmodified, with its provenance in [reference/README.md](reference/README.md)),
-  [cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md) (that program with a
+- **GPL-2.0-or-later**: [reference/binsdfc-0.1/](https://github.com/petfold/bayesbin/tree/main/reference) (Dominik Endres's
+  original, unmodified, with its provenance in [reference/README.md](https://github.com/petfold/bayesbin/blob/main/reference/README.md)),
+  [cpp/binsdfc-fb/](https://github.com/petfold/bayesbin/blob/main/cpp/binsdfc-fb/README.fb.md) (that program with a
   forward–backward SDF and the speed-ups described there, each changed file
   marked) and `tools/make_testdata.py` (a port of its test-data script). Their
-  licence text is in [cpp/COPYING](cpp/COPYING) and
-  [reference/COPYING](reference/COPYING).
-- The paper in [paper/](paper/) is copyright its authors, not under either
+  licence text is in [cpp/COPYING](https://github.com/petfold/bayesbin/blob/main/cpp/COPYING) and
+  [reference/COPYING](https://github.com/petfold/bayesbin/blob/main/reference/COPYING).
+- The paper in [paper/](https://github.com/petfold/bayesbin/tree/main/paper) is copyright its authors, not under either
   licence.
 
 ## Citing

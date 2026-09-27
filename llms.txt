@@ -1,0 +1,68 @@
+# bayesbin
+
+> Exact Bayesian binning (Endres, Oram, Schindelin & Földiák, NIPS 2007) in NumPy/SciPy: estimates a rate that varies along one ordered axis from counts per interval, as the posterior average over every piecewise-constant segmentation (every number and placement of bin boundaries). Gives the rate, its standard deviation, change-point probabilities and the posterior over the number of boundaries. No bin width, bandwidth or penalty to choose; no optimisation or sampling. BSD-3-Clause. Human tutorial: docs/USER_GUIDE.md.
+
+## Use it for / not for
+
+- For: spike trains over repeated trials (PSTH); event counts per window, optionally with exposure (observation time, population); successes out of trials per interval; change-point detection with uncertainty; daily/weekly profiles (fold: days as repeats).
+- Not for: unordered categories; 2-D data; heavily overdispersed (bursty, clumped) counts, which it reads as many rate changes; trials that differ systematically from each other (it estimates their average profile).
+- Assumes: rate constant within a bin; events independent given the rate (Poisson counts; independent Bernoulli trials sharing one profile); a priori every number of boundaries 0..max equally likely, every boundary placement equally likely, bin rates independent (no smoothness prior).
+
+## API
+
+```python
+from bayesbin import BernoulliModel, PoissonModel, fit, spike_counts, credible_m_range
+
+s, g = spike_counts(trials, t_start, t_end)       # trials: iterables of int event times; t_end inclusive
+                                                  # -> s[k] trials with an event in interval k, g[k] without;
+                                                  # raises ValueError if a trial has 2 events in one interval
+BernoulliModel(s, g, sigma=1.0, gamma=32.0)       # s successes, g failures per interval; Beta(sigma, gamma) prior per bin
+PoissonModel(y, alpha, beta, e=None)              # y counts, e exposure per interval (default 1); Gamma(alpha, beta) prior (shape, rate)
+PoissonModel.weak_prior(y, e=None, weight=1.0)    # Gamma prior centred on sum(y)/sum(e), worth `weight` events: the usual choice
+r = fit(model, max_boundaries=10, *, m_mass=None, keep_bins=False, min_m_posterior=1e-12, exact=False)
+```
+
+`fit` returns `BinningResult` (arrays indexed by interval k = 0..T-1, T = len(s) or len(y)):
+
+- `r.rate[k]`: posterior mean rate. Bernoulli: probability per trial per interval. Poisson: events per unit exposure.
+- `r.rate_std[k]`: posterior standard deviation of the rate (the error bar).
+- `r.boundary_posterior[k]`, k = 0..T-2: P(a bin ends right after interval k), i.e. a new rate starts at k+1. Summed over a window = expected number of change points in it (can exceed 1).
+- `r.m_posterior[M]`, M = 0..max_boundaries: P(M boundaries | data). `r.m_posterior[0]` = P(no change at all). `r.m_map` = argmax.
+- `r.log_evidence[M]` = log P(data | M); `r.log_marginal` = log P(data).
+- `r.bin_posterior[a, b]`: P([a, b] is a bin), only with keep_bins=True (T x T memory).
+
+## Decision rules
+
+- max_boundaries: after fitting, if `r.m_posterior[-1] > 1e-3`, raise it and refit. Cost is linear in it.
+- Bernoulli prior: default sigma=1, gamma=32 (prior mean 1/33) is for small probabilities such as spikes per ms. For proportions that may be anywhere in 0..1 (conversion, failure rates) use sigma=1, gamma=1. The prior is worth sigma+gamma pseudo-trials per bin.
+- Poisson: use `PoissonModel.weak_prior(y, e)` unless there is real prior knowledge. Unequal interval widths: pass the widths as `e`.
+- m_mass: leave None (average over all M; best rate estimate). 0.9 = credible range of M; 0.0 = most probable M only (the original binsdfc program's behaviour).
+- Do not report `m_map` as "the number of changes": ambiguous fluctuations get probability too. Report changes where `boundary_posterior` (summed over a small window) is high.
+- Periodic data over many periods: fold (sum counts per phase slot over periods, exposure = number of periods observed per slot) instead of fitting the long series.
+
+## Performance
+
+- O(T^2 * max_boundaries) time, O(T * max_boundaries) memory. Examples (with the `fast` extra, 4 cores): T=2016, M<=30: 0.1 s; T=12096, M<=120: 4.3 s. NumPy-only is ~2x slower on one core and gains little from more cores.
+- `pip install "bayesbin[fast]"` adds numba + threadpoolctl: fused multi-threaded kernels, identical results to rounding and bit-identical across thread counts. First call in a new environment compiles (~1 min, cached). `BAYESBIN_NUMBA=0` disables them. Threads: `NUMBA_NUM_THREADS` = physical cores.
+- Very strong evidence (counts in the hundreds+ per interval, or hundreds of trials with sharp steps) takes a slower exact path, up to ~10x slower; use coarser intervals or fold.
+- Non-integer counts work but use the NumPy path. The kernels release the GIL: many independent fits can run in parallel from a thread pool.
+
+## Minimal recipes
+
+```python
+# spike trains, 1-ms intervals from -100 to 499 ms
+s, g = spike_counts(trials, -100, 499); r = fit(BernoulliModel(s, g), 20)
+# counts per day with hours observed as exposure
+r = fit(PoissonModel.weak_prior(counts, hours), 6)
+# successes out of trials per hour, any level
+r = fit(BernoulliModel(successes, trials - successes, sigma=1, gamma=1), 5)
+# daily profile from D days x S slots of counts, observed = boolean mask of seen slots
+r = fit(PoissonModel.weak_prior((counts * observed).sum(0), observed.sum(0)), 15)
+```
+
+## Links
+
+- docs/USER_GUIDE.md: tutorial (why, assumptions, four worked examples, pitfalls)
+- README.md: verification, speed tables, licences
+- docs/NOTES.md: related papers, 2-D extensions, implementation notes
+- Paper: https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html

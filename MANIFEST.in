@@ -1,0 +1,11 @@
+# The source distribution: the Python package (BSD-3-Clause) with what its tests need.
+# The C++ (cpp/, reference/, GPL-2.0-or-later) and the paper stay in the repository only;
+# the tests against the C++ skip without it.
+include LICENSE README.md CITATION.cff llms.txt
+recursive-include docs *.md *.png
+recursive-include tests *.py *.txt
+include tools/longdouble_reference.py
+prune cpp
+prune reference
+prune paper
+exclude tools/make_testdata.py
