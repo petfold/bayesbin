@@ -40,7 +40,7 @@ _FAST = None
 if os.environ.get("BAYESBIN_NUMBA", "1") != "0":
     try:
         from bayesbin import _fast as _FAST
-    except ImportError:  # numba not installed: the NumPy path
+    except ImportError:  # numba or threadpoolctl not installed: the NumPy path
         _FAST = None
 _TINY = np.finfo(float).tiny  # smallest normal double: below it a term is lost or imprecise
 # factors below √TINY are flushed to 0 before a matrix product, so that no product of two kept
@@ -423,10 +423,9 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
 
 def _forward_fused(params, T: int, max_m: int, reverse: bool, *, tol: float = 1e-13,
                    block: int = 256) -> np.ndarray:
-    """_forward with the element-wise work in fused kernels (bayesbin._fast): the gain
-    slice, its column maxima and its flushed exps; the scaled rows before a block; the
-    steps inside each block in one loop. The matrix product of the rows before a block
-    stays in BLAS."""
+    """_forward with the work in fused, multi-threaded kernels (bayesbin._fast): the gain
+    slice, its column maxima and its flushed exps; the scaled rows before a block and
+    their matrix product; the steps inside each block in one loop."""
     fwd = np.full((max_m + 1, T), _NEG_INF)
     b = _FAST.base(*params, T, reverse)
     fwd[0] = b
@@ -435,18 +434,18 @@ def _forward_fused(params, T: int, max_m: int, reverse: bool, *, tol: float = 1e
     phi = np.full((max_m + 1, T), _NEG_INF)
     phi[0] = 0.0
     floor = 2 * T * _FLUSH / tol
-    for c0 in range(0, T, block):
-        c1 = min(T, c0 + block)
-        if c1 - 1 <= 0:
-            continue
-        E, c, reach = _FAST.gain_slice(*params, T, reverse, b, c0, c1, _LOG_FLUSH)
-        if c0 > 0:
-            X, q, qfin = _FAST.scaled_rows(phi, max_m, c0, _LOG_FLUSH)
-            before = X @ E[:c0]
-        else:
-            before, q, qfin = np.zeros((max_m, c1 - c0)), np.zeros(max_m), np.zeros(max_m, bool)
-        _FAST.block_steps(*params, T, reverse, b, phi, E, before, q, qfin, c, reach, c0, c1, floor,
-                          _LOG_FLUSH)
+    with _FAST.one_blas_thread():  # the kernels split the products over numba's threads
+        for c0 in range(0, T, block):
+            c1 = min(T, c0 + block)
+            if c1 - 1 <= 0:
+                continue
+            E, c, reach = _FAST.gain_slice(*params, T, reverse, b, c0, c1, _LOG_FLUSH)
+            if c0 > 0:
+                before, q, qfin = _FAST.rows_before(phi, max_m, c0, _LOG_FLUSH, E)
+            else:
+                before, q, qfin = np.zeros((max_m, c1 - c0)), np.zeros(max_m), np.zeros(max_m, bool)
+            _FAST.block_steps(*params, T, reverse, b, phi, E, before, q, qfin, c, reach, c0, c1,
+                              floor, _LOG_FLUSH)
     fwd[1:] = b[None, :] + phi[1:]
     return fwd
 
@@ -599,14 +598,15 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
     kern = model._kernel() if _FAST is not None else None
     if kern is not None:  # the tile's element-wise work in one fused pass
         params, (sh0, sh1) = kern
-        left_c, R_c = np.ascontiguousarray(left), np.ascontiguousarray(R)
-        for a0 in range(0, T, tile_a):
-            a1 = min(T, a0 + tile_a)
-            for b0 in range(a0, T, tile_b):
-                b1 = min(T, b0 + tile_b)
-                C = A[a0:a1] @ B[:, b0:b1]
-                _FAST.tile_accumulate(*params, float(sh0), float(sh1), C, 1.0 / _UP**2, a0, b0,
-                                      ma, mb, left_c, R_c, log_risk, d1, d2, ends)
+        left_c, R_c, A_c = np.ascontiguousarray(left), np.ascontiguousarray(R), np.ascontiguousarray(A)
+        Bt = [np.ascontiguousarray(B[:, b0:b0 + tile_b]) for b0 in range(0, T, tile_b)]
+        with _FAST.one_blas_thread():  # the kernel splits the products over numba's threads
+            for a0 in range(0, T, tile_a):
+                a1 = min(T, a0 + tile_a)
+                for b0 in range(a0 - a0 % tile_b, T, tile_b):  # tiles of ends aligned to tile_b
+                    _FAST.tile_accumulate(*params, float(sh0), float(sh1), A_c, Bt[b0 // tile_b],
+                                          1.0 / _UP**2, a0, a1, b0, ma, mb, left_c, R_c, log_risk,
+                                          d1, d2, ends)
         return np.cumsum(d1)[:T], np.cumsum(d2)[:T], ends[:T - 1]
     log_up2 = 2 * np.log(_UP)
     for a0 in range(0, T, tile_a):

@@ -388,6 +388,30 @@ def test_fused_kernels_equal_the_exact_path():
         np.testing.assert_allclose(got.boundary_posterior, ref.boundary_posterior, atol=1e-12)
 
 
+def test_fused_results_do_not_depend_on_the_number_of_threads():
+    numba = pytest.importorskip("numba")
+    import bayesbin.core as core
+
+    if core._FAST is None:
+        pytest.skip("fused kernels switched off (BAYESBIN_NUMBA=0)")
+    n = numba.config.NUMBA_NUM_THREADS
+    if n < 2:
+        pytest.skip("one thread only")
+    saved = numba.get_num_threads()
+    try:
+        numba.set_num_threads(1)
+        one = [fit(m, 12, m_mass=0.9) for m in _models_for_kernels()]
+        numba.set_num_threads(n)
+        many = [fit(m, 12, m_mass=0.9) for m in _models_for_kernels()]
+    finally:
+        numba.set_num_threads(saved)
+    for a, b in zip(one, many):  # bit for bit: the parallel parts are fixed, not per thread
+        np.testing.assert_array_equal(a.log_evidence, b.log_evidence)
+        np.testing.assert_array_equal(a.rate, b.rate)
+        np.testing.assert_array_equal(a.rate_std, b.rate_std)
+        np.testing.assert_array_equal(a.boundary_posterior, b.boundary_posterior)
+
+
 def test_non_integer_data_take_the_numpy_path():
     rng = np.random.default_rng(22)
     model = PoissonModel.weak_prior(rng.uniform(0, 5, 200))

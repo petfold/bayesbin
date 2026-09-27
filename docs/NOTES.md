@@ -17,8 +17,11 @@
 3. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.
 4. **2-D** via recursive partitions (below: where the method stops being 1-D).
-5. **Threads**: numba `prange` over tiles and columns, to match binsdfc-fb on
-   4 threads.
+5. **The last sequential step**: the steps inside each 256-column block of the
+   dynamic programme (about 15% of the time on 4 threads). A `prange` over
+   columns per step cost more in launches than it saved; a narrower block for
+   the inside rows, or running the forward and backward passes concurrently,
+   are the options left.
 
 ## The papers
 
@@ -59,6 +62,15 @@
   constant.
 - Without SVML (numba) or AVX-512 (NumPy), exp is scalar, about 12 ns on this
   laptop: it and the lgamma table lookups set the floor of the element-wise work.
+- Threads: numba's kernels and OpenBLAS's threaded products, alternating, got
+  in each other's way: after each product OpenBLAS's workers spin for a while
+  (`OPENBLAS_THREAD_TIMEOUT`, read only when the library loads), on the cores
+  numba's threads need, so 4 threads gave 1.5×. Holding BLAS to one thread
+  (threadpoolctl) and splitting each product into fixed parts on numba's own
+  threads, one BLAS call per part, gave 2.9×. Parts that are too small cost
+  more in OpenBLAS's per-call packing than they gain.
+- Fixed parts (not one per thread), combined in a fixed order, keep the results
+  bit-identical on any number of threads; a test checks it.
 
 ## Where the method stops being 1-D
 

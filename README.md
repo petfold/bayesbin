@@ -41,11 +41,18 @@ By default predictions average over every M, as the paper recommends;
 `m_mass=0.9` restricts them to the credible range of M, which is what the
 original program does.
 
-NumPy and SciPy are all it needs. With numba installed (`pip install
-bayesbin[fast]`) the element-wise work runs in fused kernels, about 2× faster;
-the first call in a new environment compiles them (a few seconds, cached
+NumPy and SciPy are all it needs. With the `fast` extra (`pip install
+bayesbin[fast]`: numba and threadpoolctl) the work runs in fused kernels on all
+cores: about 2× faster on one core, and scaling to about 3× more on four. The
+first call in a new environment compiles them (about a minute, once; cached
 afterwards), and `BAYESBIN_NUMBA=0` switches them off. Both paths give the same
-results to rounding.
+results to rounding, and the fused ones the same bits on any number of threads.
+
+Threads: numba's, `NUMBA_NUM_THREADS` or `numba.set_num_threads(n)`; the
+default is every logical CPU, and hyperthreads gain nothing here, so set it to
+the number of physical cores for the best time. While a fit runs, the fused
+path holds BLAS to one thread and splits the matrix products over numba's
+threads itself.
 
 ## What it is for
 
@@ -88,7 +95,7 @@ to two dimensions.
 
 ## Verification
 
-`pytest` (32 tests; 4 need `cpp/binsdfc-fb` built, 3 need numba):
+`pytest` (33 tests; 4 need `cpp/binsdfc-fb` built, 4 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -141,21 +148,22 @@ binsdfc 0.1 unmodified (`g++ -O2 -fopenmp`; its own flags `-march=native
 -ffast-math` made no real difference), against bayesbin with NumPy 2.5,
 OpenBLAS and numba 0.67. Intel i7-3612QM (4 cores, 2 hyperthreads each; AVX,
 no AVX2 or FMA); "1 core" means one physical core, and "4 threads" four
-separate physical cores. binsdfc is timed as a process, bayesbin in-process
-without the import and after a warm-up call (the fused kernels' cache load,
-0.25 s once per process).
+separate physical cores (`taskset`; numba, OpenMP and OpenBLAS thread counts
+set to match). binsdfc is timed as a process, bayesbin in-process without the
+import and after a warm-up call (the fused kernels' cache load, once per
+process).
 
-| case | binsdfc, 1 core | binsdfc, 4 threads | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core |
-|---|---|---|---|---|---|---|
-| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | | | 0.020 s | 0.009 s |
-| T=600, M≤10, rate ± sd | 50.0 s | 12.4 s | 0.033 s | 0.021 s | 0.059 s | 0.024 s |
-| T=600, M≤10, evidence only | 0.065 s | — | 0.020 s | 0.017 s | 0.017 s | 0.008 s |
-| T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.14 s | 0.076 s |
-| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s |
+| case | binsdfc, 1 core | binsdfc, 4 threads | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core | bayesbin + numba, 4 threads |
+|---|---|---|---|---|---|---|---|
+| T=300, M≤10, rate ± sd | 0.98 s | 0.27 s | | | 0.018 s | 0.008 s | 0.006 s |
+| T=600, M≤10, rate ± sd | 50.0 s | 12.4 s | 0.033 s | 0.021 s | 0.050 s | 0.023 s | 0.012 s |
+| T=600, M≤10, evidence only | 0.065 s | — | 0.020 s | 0.017 s | 0.014 s | 0.008 s | 0.005 s |
+| T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.14 s | 0.083 s | 0.035 s |
+| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s | 0.099 s |
 
 `binsdfc-fb` is the original with the forward–backward SDF, the matrix-vector
 central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)); best
-of 5 runs, `OMP_NUM_THREADS` set to the cores given. (binsdfc itself always runs 4 threads.) bayesbin is no faster on 4 threads than on 1 core.
+of 5 runs. (binsdfc itself always runs 4 threads.)
 
 - The evidences use the same dynamic programme in both. binsdfc's triple loop
   is the slowest; binsdfc-fb and bayesbin both run its central iteration in
@@ -166,25 +174,27 @@ of 5 runs, `OMP_NUM_THREADS` set to the cores given. (binsdfc itself always runs
   second moment), O(M·T³). bayesbin gets every time point from one backward
   pass, O(M·T²). The gap is the algorithm, not the language.
 - binsdfc fixes 4 OpenMP threads over time points (`omp_set_num_threads(4)`)
-  and scales almost 4×. bayesbin runs on one thread outside BLAS: its matrix
-  products are only part of the time, the rest is element-wise work (bin
-  evidences, exps, moments) in the fused kernels or in NumPy.
+  and scales almost 4×. bayesbin's NumPy path runs on one thread outside BLAS;
+  its fused path runs every step on numba's threads (the matrix products split
+  into fixed parts) except the steps inside each 256-column block of the
+  dynamic programme, which are sequential in M, and scales about 2.9× on 4
+  cores.
 
 ### Larger problems
 
 30 trials of a synthetic daily profile (5-minute slots: night, morning ramp,
-day, evening peak, plus a 2-hour burst each week), rate ± sd, most probable M
-only (`-l 0`, `m_mass=0.0`), peak memory from `/usr/bin/time` and
-`getrusage`. All but the 12-week row run back to back, one run each; the
-laptop was thermally throttled (about 2.3 GHz).
+day, evening peak, plus a 2-hour burst each week; `tools/make_longdata.py T`),
+rate ± sd, most probable M only (`-l 0`, `m_mass=0.0`), peak memory from
+`/usr/bin/time` and `getrusage`. All but the 12-week row run back to back, one
+run each; the laptop was thermally throttled.
 
-| T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core |
-|---|---|---|---|---|---|---|
-| 2016 (1 week) | 30 | 0.25 s | 0.11 s | 12 MB | 0.55 s, 87 MB | 0.27 s, 176 MB |
-| 4032 (2 weeks) | 60 | 1.40 s | 0.46 s | 19 MB | 2.04 s, 110 MB | 1.12 s, 194 MB |
-| 8064 (4 weeks) | 120 | 9.3 s | 2.9 s | 44 MB | 8.5 s, 184 MB | 5.4 s, 234 MB |
-| 12096 (6 weeks) | 120 | 20.5 s | 6.5 s | 61 MB | 18.6 s, 249 MB | 12.3 s, 271 MB |
-| 24192 (12 weeks) | 120 | | 86 s | 116 MB | | |
+| T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core | bayesbin + numba, 4 threads |
+|---|---|---|---|---|---|---|---|
+| 2016 (1 week) | 30 | 0.25 s | 0.10 s | 12 MB | 0.54 s, 88 MB | 0.27 s, 175 MB | 0.11 s, 177 MB |
+| 4032 (2 weeks) | 60 | 1.44 s | 0.45 s | 19 MB | 1.99 s, 110 MB | 1.18 s, 189 MB | 0.53 s, 192 MB |
+| 8064 (4 weeks) | 120 | 9.2 s | 2.9 s | 44 MB | 8.7 s, 179 MB | 5.8 s, 235 MB | 2.0 s, 242 MB |
+| 12096 (6 weeks) | 120 | 20.3 s | 6.3 s | 61 MB | 18.6 s, 250 MB | 13.0 s, 271 MB | 4.3 s, 280 MB |
+| 24192 (12 weeks) | 120 | | 86 s | 116 MB | | | |
 
 - binsdfc-fb memory is O(T·M): no T×T array is kept. (Before: ≈14·T²
   bytes, 2.1 GB at 6 weeks; 12 weeks would have needed ≈8 GB.) Output is
