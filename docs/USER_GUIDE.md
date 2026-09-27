@@ -124,8 +124,8 @@ uncertainty, daily or weekly profiles.
 ## 4. Install
 
 ```sh
-pip install "bayesbin @ git+https://github.com/petfold/bayesbin"          # NumPy/SciPy only
-pip install "bayesbin[fast] @ git+https://github.com/petfold/bayesbin"    # + numba: ~2x faster, all cores
+pip install bayesbin              # NumPy/SciPy only
+pip install "bayesbin[fast]"      # + numba kernels: ~2x faster, all cores
 ```
 
 The `fast` version compiles its kernels the first time it is used in a new

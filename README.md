@@ -24,8 +24,8 @@ trains, counts with exposure, success rates, a daily profile) and the pitfalls.
 For AI coding assistants there is a compact [llms.txt](https://github.com/petfold/bayesbin/blob/main/llms.txt).
 
 ```sh
-pip install "bayesbin @ git+https://github.com/petfold/bayesbin"          # NumPy/SciPy only
-pip install "bayesbin[fast] @ git+https://github.com/petfold/bayesbin"    # + numba kernels, ~2x faster
+pip install bayesbin              # NumPy/SciPy only
+pip install "bayesbin[fast]"      # + numba kernels: ~2x faster, all cores
 ```
 
 ```python
