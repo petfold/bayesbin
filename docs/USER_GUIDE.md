@@ -149,16 +149,18 @@ alone, Bayesian Blocks, or for a live stream online change-point detection
 (Tutorial 6).
 
 **How much better, and with how little data?** On the example of section 1,
-30 simulated datasets for each number of trials, the error of each method
-against the true rate, as a multiple of bayesbin's:
+with 30 simulated datasets for each number of trials: each method's error
+against the true rate (the root-mean-square difference, in firing probability
+per millisecond; lower is better), and in brackets that error as a multiple of
+bayesbin's.
 
-| trials | Shimazaki–Shinomoto histogram | Shimazaki–Shinomoto kernel | best histogram | best kernel |
-|---|---|---|---|---|
-| 2 | 1.41 | 1.43 | 1.31 | 1.21 |
-| 5 | 1.42 | 1.31 | 1.36 | 1.14 |
-| 10 | 1.44 | 1.24 | 1.45 | 1.17 |
-| 30 | 1.81 | 1.55 | 1.89 | 1.50 |
-| 100 | 2.92 | — | 3.27 | 2.57 |
+| trials | **bayesbin** | Shimazaki–Shinomoto histogram | Shimazaki–Shinomoto kernel | best histogram | best kernel |
+|---|---|---|---|---|---|
+| 2 | **0.0138** | 0.0194 (1.41×) | 0.0196 (1.43×) | 0.0181 (1.31×) | 0.0167 (1.21×) |
+| 5 | **0.0110** | 0.0156 (1.42×) | 0.0143 (1.31×) | 0.0149 (1.36×) | 0.0125 (1.14×) |
+| 10 | **0.0087** | 0.0125 (1.44×) | 0.0107 (1.24×) | 0.0126 (1.45×) | 0.0102 (1.17×) |
+| 30 | **0.0051** | 0.0091 (1.81×) | 0.0078 (1.55×) | 0.0096 (1.89×) | 0.0076 (1.50×) |
+| 100 | **0.0022** | 0.0063 (2.92×) | — | 0.0071 (3.27×) | 0.0056 (2.57×) |
 
 The "best" columns choose the bin width or bandwidth *knowing* the true rate,
 which no real method can; bayesbin beats them anyway. With few data every

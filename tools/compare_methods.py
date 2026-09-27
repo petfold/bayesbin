@@ -89,7 +89,8 @@ def main() -> None:
     print(f"true rate within ±1 sd: {np.mean(in1):.0%} of time points, ±2 sd: {np.mean(in2):.0%}")
     widths = [2, 3, 5, 8, 10, 15, 20, 30, 40, 50, 60, 80, 100]
     bws = [2, 3, 5, 7, 10, 15, 20, 30, 50]
-    print(f"{'trials':>6} {'bayesbin':>9} {'S&S hist':>9} {'S&S kernel':>11} {'best hist':>10} {'best kernel':>12}")
+    print("RMS error against the true rate (and as a multiple of bayesbin's):")
+    print(f"{'trials':>6} {'bayesbin':>9} {'S&S hist':>17} {'S&S kernel':>17} {'best hist':>17} {'best kernel':>17}")
     for n in (2, 5, 10, 30, 100):
         res = {k: [] for k in ("bb", "ssh", "ssk")}
         hist = {w: [] for w in widths}
@@ -105,9 +106,10 @@ def main() -> None:
             for b in bws:
                 kern[b].append(rms(gaussian_filter1d(s / n, b, mode="nearest")))
         B = np.mean(res["bb"])
-        ratio = lambda v: f"{np.mean(v) / B:.2f}x" if len(v) else "-"
-        print(f"{n:>6} {B:9.4f} {ratio(res['ssh']):>9} {ratio(res['ssk']):>11} "
-              f"{min(np.mean(v) for v in hist.values()) / B:9.2f}x {min(np.mean(v) for v in kern.values()) / B:11.2f}x")
+        both = lambda e: f"{e:.4f} ({e / B:.2f}x)"
+        cols = [both(np.mean(res["ssh"])), both(np.mean(res["ssk"])) if res["ssk"] else "-",
+                both(min(np.mean(v) for v in hist.values())), both(min(np.mean(v) for v in kern.values()))]
+        print(f"{n:>6} {B:9.4f} " + " ".join(f"{c:>17}" for c in cols))
 
 
 if __name__ == "__main__":
