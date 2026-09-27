@@ -24,7 +24,7 @@ the same rate mean and variance as their mixture. Neighbouring old runs differ b
 about 1/√ℓ posterior sd, so the error is small, and the state grows with the log
 of the segment's length: exact_recent + merge_bins·log2(ℓ / exact_recent)
 components at most. Against keeping every run, with the default 32 per octave:
-a 30,000-interval quiet stream kept 313 components instead of 30,000 (18x
+a 30,000-interval quiet stream kept 313 components instead of 30,000 (17x
 faster), and the rate, its sd and the PIT moved by at most 2e-6, 3e-5 and 1e-6;
 on counts of ~500 with a change every few hundred intervals, 3e-6, 3e-4, 1e-5
 (16 per octave: 5e-4, 4e-2, 2e-3). merge_bins=None keeps every run.
