@@ -69,6 +69,71 @@ def test_stream_is_exact_against_enumerating_every_segmentation(kind):
         assert cp.rate_now()[0] == pytest.approx(rate, rel=1e-12)
 
 
+def test_negbinomial_stream_is_exact_against_enumeration():
+    """Negative binomial segments, NB(r e, p) with p ~ Beta: the marginal likelihood and run
+    lengths against enumerating every segmentation (segment evidence in closed form)."""
+    rng = np.random.default_rng(3)
+    T, r, (alpha, beta) = 9, 2.0, (1.5, 0.5)
+    e = rng.uniform(0.5, 2.0, T)
+    x = rng.poisson(rng.gamma(r * e, np.repeat([1.0, 6.0, 2.0], 3) / r)).astype(float)
+    cp = ChangePointStream.negbinomial(alpha, beta, r, expected_run_length=4, prune=0)
+    a, b = cp.prior
+
+    def seg(xs, es):
+        n = r * es
+        return (np.sum(gammaln(n + xs) - gammaln(n) - gammaln(xs + 1))
+                + betaln(a + n.sum(), b + xs.sum()) - betaln(a, b))
+
+    for t in range(1, T + 1):
+        cp.update(x[t - 1], e[t - 1])
+        terms = []
+        for bits in itertools.product([0, 1], repeat=t - 1):
+            starts = [0] + [i + 1 for i, bit in enumerate(bits) if bit]
+            ends = starts[1:] + [t]
+            lp = sum(bits) * np.log(cp.hazard) + (t - 1 - sum(bits)) * np.log1p(-cp.hazard)
+            terms.append(lp + sum(seg(x[i:j], e[i:j]) for i, j in zip(starts, ends)))
+        assert cp.log_marginal == pytest.approx(logsumexp(terms), rel=1e-13, abs=1e-12)
+
+
+def test_negbinomial_tends_to_poisson_and_the_mixture_finds_the_dispersion():
+    rng = np.random.default_rng(4)
+    y = rng.poisson(4.0, 300)
+    p = ChangePointStream.poisson(1.0, 0.25, expected_run_length=200)
+    nb = ChangePointStream.negbinomial(1.0, 0.25, 1e6, expected_run_length=200)
+    p.update(y)
+    nb.update(y)
+    assert nb.log_marginal == pytest.approx(p.log_marginal, abs=1e-3)
+    assert nb.rate_now()[0] == pytest.approx(p.rate_now()[0], rel=1e-5)
+    for true_r in (1.0, 8.0):
+        yy = rng.poisson(rng.gamma(true_r, 5.0 / true_r, 1500))
+        mix = ChangePointStream.overdispersed(1.0, 0.2, expected_run_length=1000)
+        mix.update(yy)
+        r, w = mix.dispersion_posterior()
+        assert r[np.argmax(w)] == true_r and w.sum() == pytest.approx(1.0)
+    # the beta-negative-binomial has a power-law tail: sum far enough out
+    assert mix.next_pmf(np.arange(20000)).sum() == pytest.approx(1.0, abs=1e-7)
+    np.testing.assert_allclose(mix.next_cdf(np.arange(40)), np.cumsum(mix.next_pmf(np.arange(40))), atol=1e-12)
+
+
+def test_overdispersed_counts_are_calibrated_by_the_mixture_and_not_by_poisson():
+    rng = np.random.default_rng(14)
+    lam, y = rng.gamma(2.0, 2.5), []
+    for t in range(2500):
+        if t > 0 and rng.random() < 1 / 300:
+            lam = rng.gamma(2.0, 2.5)
+        y.append(rng.poisson(rng.gamma(1.5, lam / 1.5)))  # dispersion 1.5: variance lam (1 + lam/1.5)
+    q = {"mixture": [], "poisson": []}
+    mix = ChangePointStream.overdispersed(2.0, 0.4, expected_run_length=300)
+    poi = ChangePointStream.poisson(2.0, 0.4, expected_run_length=300)
+    for yt in y:
+        q["mixture"].append(mix.pit(yt, u=rng.random()))
+        q["poisson"].append(poi.pit(yt, u=rng.random()))
+        mix.update(yt)
+        poi.update(yt)
+    assert kstest(q["mixture"], "uniform").pvalue > 0.01
+    assert kstest(q["poisson"], "uniform").pvalue < 1e-10
+
+
 def _generate(rng, T, h, alpha, beta, overdispersed=False):
     lam, y = rng.gamma(alpha, 1 / beta), np.empty(T)
     for t in range(T):

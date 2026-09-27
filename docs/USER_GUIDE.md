@@ -470,6 +470,15 @@ uniformity can be checked: on data from the model the test suite finds them
 uniform; on bursty (overdispersed) counts they are far from it, which is the
 warning sign that the model does not fit.
 
+**Bursty counts.** If events come in clumps, one story in many reports, one
+fault in many log lines, the counts vary more than Poisson counts can, and the
+surprise values show it: too many near 1, as in the overdispersed test above.
+`ChangePointStream.overdispersed(alpha, beta, expected_run_length)` takes the
+same arguments and learns how bursty the stream is: it runs the model for a
+range of burstiness levels at once and weights each by how well it has
+predicted the data so far (`dispersion_posterior()` shows the weights). It
+costs about ten times as much per count.
+
 **Choosing `expected_run_length`**: how long, on average, you expect a rate to
 last. It sets how readily the model believes in a change; the results are not
 very sensitive to it within a factor of a few. **The prior** (`alpha`, `beta`,

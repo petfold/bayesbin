@@ -125,6 +125,7 @@ For data that arrive over time, with the same two likelihoods:
 |---|---|---|---|
 | `OnlineBinning` | as `fit`: up to `max_boundaries` boundaries | exactly what `fit` gives for the latest interval, the next count's predictive; `fit()` for the past | grows with the data so far |
 | `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT | grows with the log of the current segment (old run lengths merged) |
+| `ChangePointStream.overdispersed` (a `ChangePointMixture`) | the same, with negative binomial segments over a grid of dispersions | the same, for bursty counts; `dispersion_posterior()` | about 10x the above |
 
 ## The C++ version: binsdfc-fb
 
@@ -147,7 +148,7 @@ the PyPI package. Timings against bayesbin are in the tables below.
 
 ## Verification
 
-`pytest` (58 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
+`pytest` (61 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](https://github.com/petfold/bayesbin/tree/main/reference)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):

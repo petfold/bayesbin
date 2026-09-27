@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Overdispersed (bursty) counts in streams: `ChangePointStream.negbinomial`
+  gives each segment a negative binomial likelihood of a known dispersion,
+  still conjugate (NB(r e, p) with a Beta prior on p, matched to the Gamma
+  prior's mean and variance for every r, and tending to `.poisson` as r grows);
+  `ChangePointStream.overdispersed` returns a `ChangePointMixture`, a bank of
+  them over a grid of dispersions (as Worldwatch's Layer-0 count model's),
+  weighted by their marginal likelihoods, with the same interface and
+  `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
+  the Poisson segments' is not (tested); exact against enumeration.
+
 ## 0.3.0 (2026-09-27)
 
 - `ChangePointStream`: its state is bounded. Run lengths up to `exact_recent`

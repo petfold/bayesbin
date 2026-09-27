@@ -36,6 +36,13 @@ on counts of ~500 with a change every few hundred intervals, 3e-6, 3e-4, 1e-5
         rate, sd = cp.rate_now()
         recent = cp.p_change_within(5)
 
+Overdispersed counts (bursty: each event brings others, one story many reports) break
+the Poisson segments' calibration. ChangePointStream.negbinomial gives each segment a
+negative binomial likelihood of a known dispersion instead, still conjugate (a Beta
+prior on its p, the same Gamma prior on the rate in the Poisson limit), and
+ChangePointStream.overdispersed averages a bank of them over a grid of dispersions,
+weighted by their marginal likelihoods (ChangePointMixture).
+
 Probabilities of counts are of the counts themselves: Bernoulli ones include the
 binomial coefficient (the batch evidences of bayesbin.core are of one sequence of
 trials, without it); Poisson ones include 1/y!.
@@ -48,6 +55,9 @@ from scipy.special import betainc, betaln, gammaln, xlogy
 
 _NEG_INF = -np.inf
 _NEGLIGIBLE = 1e-16  # predictive components lighter than this (of the total) are left out of cdfs
+# the dispersions an overdispersed stream averages over (the negative binomial size per unit
+# exposure; inf: Poisson), as Worldwatch's Layer-0 count model's grid
+DISPERSIONS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, np.inf)
 
 
 def _lse(a: np.ndarray, axis: int | None = None):
@@ -65,7 +75,7 @@ class ChangePointStream:
 
     def __init__(self, kind: str, prior: tuple[float, float], expected_run_length: float,
                  prune: float = 1e-12, max_runs: int | None = None, merge_bins: int | None = 32,
-                 exact_recent: int = 128):
+                 exact_recent: int = 128, dispersion: float | None = None):
         if prior[0] <= 0 or prior[1] <= 0:
             raise ValueError("the prior's parameters must be positive")
         if not expected_run_length >= 1:
@@ -74,7 +84,10 @@ class ChangePointStream:
             raise ValueError("prune must be in [0, 1)")
         if merge_bins is not None and merge_bins < 1:
             raise ValueError("merge_bins must be >= 1 (or None: no merging)")
+        if kind == "negbin" and not (dispersion is not None and 0 < dispersion < np.inf):
+            raise ValueError("negbin: a finite, positive dispersion")
         self.kind, self.prior, self.prune, self.max_runs = kind, prior, prune, max_runs
+        self.dispersion = dispersion
         self.merge_bins, self.exact_recent = merge_bins, exact_recent
         self.hazard = 1.0 / expected_run_length
         self._log_h = np.log(self.hazard)
@@ -104,6 +117,30 @@ class ChangePointStream:
         beta) (shape, rate)."""
         return cls("poisson", (alpha, beta), expected_run_length, **kw)
 
+    @classmethod
+    def negbinomial(cls, alpha: float, beta: float, dispersion: float, expected_run_length: float,
+                    **kw) -> ChangePointStream:
+        """Per interval, a count y over exposure e (default 1), negative binomial with mean λe
+        and size dispersion·e (variance λe (1 + λ/dispersion)): Poisson counts whose rate
+        also varies from interval to interval. Conjugate: y ~ NB(r e, p), p ~ Beta(a, b) per
+        segment, with a = βr + α + 2 and b = α + α(1 + α)/(βr), which give λ = r(1 - p)/p the
+        mean α/β and variance α/β² of the Gamma(alpha, beta) prior of poisson() for every r,
+        and that prior itself as r grows. (Matching the mean alone leaves λ's prior variance
+        infinite for small r: the prior predictive's tail gets far too heavy.)"""
+        if not (0 < dispersion < np.inf):
+            raise ValueError("dispersion must be finite and positive (np.inf: use poisson())")
+        r = float(dispersion)
+        a_ = beta * r + alpha + 2.0
+        b_ = alpha + alpha * (1.0 + alpha) / (beta * r)
+        return cls("negbin", (a_, b_), expected_run_length, dispersion=r, **kw)
+
+    @classmethod
+    def overdispersed(cls, alpha: float, beta: float, expected_run_length: float,
+                      dispersions=DISPERSIONS, **kw) -> ChangePointMixture:
+        """Counts of unknown overdispersion: a ChangePointMixture of negbinomial streams (and
+        poisson for np.inf) over `dispersions`, weighted by their marginal likelihoods."""
+        return ChangePointMixture(alpha, beta, expected_run_length, dispersions, **kw)
+
     # --- the predictive of one interval, for every run and for a new segment ------------
 
     def _components(self):
@@ -125,7 +162,15 @@ class ChangePointStream:
                 lp = (gammaln(n + 1) - gammaln(x + 1) - gammaln(n - x + 1)
                       + betaln(x + A, n - x + B) - betaln(A, B))
             return np.where((x >= 0) & (x <= n) & (x == np.floor(x)), lp, _NEG_INF)
-        e = float(size)  # Gamma-Poisson: negative binomial over exposure e
+        e = float(size)
+        if self.kind == "negbin":  # beta-negative-binomial: NB(r e, p), p ~ Beta(A, B)
+            n = self.dispersion * e
+            if n == 0:  # no exposure: no events
+                return np.where(x == 0, 0.0, _NEG_INF) + 0.0 * A
+            lp = (gammaln(n + x) - gammaln(n) - gammaln(x + 1)
+                  + betaln(A + n, B + x) - betaln(A, B))
+            return np.where((x >= 0) & (x == np.floor(x)), lp, _NEG_INF)
+        # Gamma-Poisson: negative binomial over exposure e
         lp = (gammaln(x + A) - gammaln(A) - gammaln(x + 1)
               + A * np.log(B / (B + e)) + xlogy(x, e / (B + e)))
         return np.where((x >= 0) & (x == np.floor(x)), lp, _NEG_INF)
@@ -201,7 +246,7 @@ class ChangePointStream:
             raise ValueError("counts must be non-negative integers (and sizes non-negative)")
         if self.kind == "bernoulli" and (x > size).any():
             raise ValueError("more events than trials")
-        if self.kind == "poisson" and ((size == 0) & (x > 0)).any():
+        if self.kind != "bernoulli" and ((size == 0) & (x > 0)).any():
             raise ValueError("an interval with zero exposure cannot have events")
         for xi, si in zip(x, size):
             self._add(float(xi), float(si))
@@ -212,7 +257,12 @@ class ChangePointStream:
         step = _lse(lp)  # log P(x | data so far)
         self.log_marginal += float(step)
         lp -= step
-        du, dv = (x, size - x) if self.kind == "bernoulli" else (x, size)
+        if self.kind == "bernoulli":
+            du, dv = x, size - x
+        elif self.kind == "negbin":  # the Beta posterior of p: A += r e, B += y
+            du, dv = self.dispersion * size, x
+        else:
+            du, dv = x, size
         if self.T == 0:
             logp, lo, hi = lp[-1:], np.ones(1, np.int64), np.ones(1, np.int64)
             uu, vv = np.array([du]), np.array([dv])
@@ -271,7 +321,8 @@ class ChangePointStream:
         W = w.sum()
         p, q = self.prior
         A, B = self._u[idx] + p, self._v[idx] + q
-        if self.kind == "bernoulli":
+        beta_family = self.kind in ("bernoulli", "negbin")  # a Beta posterior (of f, or of p)
+        if beta_family:
             n = A + B
             m, s = A / n, A * B / (n**2 * (n + 1))
         else:
@@ -280,7 +331,7 @@ class ChangePointStream:
         V = float(w @ (s + (m - M) ** 2)) / W
         if not V > 0:
             return None
-        if self.kind == "bernoulli":
+        if beta_family:
             n_ = M * (1 - M) / V - 1
             if not n_ > 0:
                 return None
@@ -325,6 +376,10 @@ class ChangePointStream:
         if self.kind == "bernoulli":
             m1 = A / (A + B)
             within = A * B / ((A + B) ** 2 * (A + B + 1))
+        elif self.kind == "negbin":  # λ = r (1 - p) / p, p ~ Beta(A, B)
+            r = self.dispersion
+            m1 = r * B / (A - 1)
+            within = r * r * B * (A + B - 1) / ((A - 1) ** 2 * (A - 2))
         else:
             m1 = A / B
             within = A / B**2
@@ -335,3 +390,75 @@ class ChangePointStream:
     def n_runs(self) -> int:
         """How many components the state keeps (the cost per interval)."""
         return len(self._logp)
+
+
+class ChangePointMixture:
+    """Change points in counts of unknown overdispersion: one ChangePointStream per dispersion
+    (negbinomial, and poisson for np.inf), all fed the same counts, averaged with weights
+    proportional to their marginal likelihoods (a uniform prior over the grid). Same interface
+    as ChangePointStream for Poisson-type counts; dispersion_posterior() gives the weights."""
+
+    def __init__(self, alpha: float, beta: float, expected_run_length: float,
+                 dispersions=DISPERSIONS, **kw):
+        self.dispersions = tuple(float(r) for r in dispersions)
+        self.members = [ChangePointStream.poisson(alpha, beta, expected_run_length, **kw) if r == np.inf
+                        else ChangePointStream.negbinomial(alpha, beta, r, expected_run_length, **kw)
+                        for r in self.dispersions]
+        self.kind, self.prior = "mixture", (alpha, beta)
+
+    @property
+    def T(self) -> int:
+        return self.members[0].T
+
+    @property
+    def hazard(self) -> float:
+        return self.members[0].hazard
+
+    def _weights(self) -> np.ndarray:
+        lm = np.array([m.log_marginal for m in self.members])
+        return np.exp(lm - _lse(lm))
+
+    def dispersion_posterior(self) -> tuple[np.ndarray, np.ndarray]:
+        """(dispersions, P(dispersion | data so far))."""
+        return np.array(self.dispersions), self._weights()
+
+    @property
+    def log_marginal(self) -> float:
+        """log P(all counts so far), the prior over the grid included."""
+        lm = np.array([m.log_marginal for m in self.members])
+        return float(_lse(lm) - np.log(len(lm)))
+
+    def update(self, x, size=None) -> None:
+        for m in self.members:
+            m.update(x, size)
+
+    def next_pmf(self, x, size: float | None = None) -> np.ndarray:
+        return self._weights() @ np.array([m.next_pmf(x, size) for m in self.members])
+
+    def next_logpmf(self, x, size: float | None = None) -> np.ndarray:
+        return np.log(self.next_pmf(x, size))
+
+    def next_cdf(self, x, size: float | None = None) -> np.ndarray:
+        return self._weights() @ np.array([m.next_cdf(x, size) for m in self.members])
+
+    def pit(self, x: float, size: float | None = None, u: float | None = None,
+            rng: np.random.Generator | None = None) -> float:
+        """The randomized PIT of a count x before it is added (see ChangePointStream.pit)."""
+        if u is None:
+            u = (rng or np.random.default_rng()).random()
+        below = float(self.next_cdf(x - 1, size)[0]) if x >= 1 else 0.0
+        return below + u * float(self.next_pmf(x, size)[0])
+
+    def rate_now(self) -> tuple[float, float]:
+        """The rate now and its standard deviation, averaged over the dispersions."""
+        w = self._weights()
+        ms = np.array([m.rate_now() for m in self.members])
+        mean = float(w @ ms[:, 0])
+        return mean, float(np.sqrt(w @ (ms[:, 1] ** 2 + (ms[:, 0] - mean) ** 2)))
+
+    def p_change_within(self, k: int) -> float:
+        return float(self._weights() @ np.array([m.p_change_within(k) for m in self.members]))
+
+    @property
+    def n_runs(self) -> int:
+        return sum(m.n_runs for m in self.members)

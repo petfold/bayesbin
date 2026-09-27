@@ -50,6 +50,7 @@ cp.rate_now() -> (mean, sd); cp.p_change_within(k); cp.run_length_posterior() ->
 cp.next_pmf(x, size), cp.next_cdf(x, size), cp.next_logpmf(x, size); cp.log_marginal; cp.n_runs
 ```
 
+Bursty/overdispersed counts: `ChangePointStream.overdispersed(alpha, beta, expected_run_length)` -> ChangePointMixture (same methods; `dispersion_posterior()` -> (dispersions, weights)): negative binomial segments averaged over a dispersion grid (0.25..64, inf); ~10x the cost. `ChangePointStream.negbinomial(alpha, beta, dispersion, expected_run_length)` for one known dispersion (NB size per unit exposure).
 Cost per update ~ components kept: run lengths up to exact_recent=128 exactly, older ones merged into merge_bins=32 buckets per octave of length (moment-matched; state grows with log of the current segment's length; measured against every run kept: sd within 3e-4 relative, rate and PIT within 1e-5, typically 1e-5 or less). merge_bins=None keeps every run (state then grows with the segment); max_runs=K caps by dropping (coarser).
 Bernoulli pmfs are of the count (include C(n, s)).
 
