@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `ChangePointStream`: its state is bounded. Run lengths up to `exact_recent`
+  (128) are kept exactly; older ones are merged within buckets of log length
+  (`merge_bins`, 32 per octave) into moment-matched components, so the state
+  grows with the log of the current segment's length. 30,000 quiet intervals:
+  313 components instead of 30,000, 17x faster; answers within ~1e-5.
+  `merge_bins=None` keeps every run. `run_length_ranges()` gives the state as
+  kept; `run_length_posterior()` spreads a merged component over its lengths.
+
 ## 0.2.0 (2026-09-27)
 
 Data that arrive over time:

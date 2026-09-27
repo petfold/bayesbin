@@ -109,8 +109,9 @@ def test_stream_bernoulli_pit_is_uniform_on_data_from_the_model():
 def test_pruning_costs_almost_nothing():
     rng = np.random.default_rng(3)
     y = np.concatenate([rng.poisson(lam, 300) for lam in (3, 12, 5, 30, 8)]).astype(float)
-    a = ChangePointStream.poisson(2.0, 0.4, expected_run_length=300)  # prune=1e-12
-    b = ChangePointStream.poisson(2.0, 0.4, expected_run_length=300, prune=0)
+    # pruning alone (merging, which also bounds the state, off in both)
+    a = ChangePointStream.poisson(2.0, 0.4, expected_run_length=300, merge_bins=None)  # prune=1e-12
+    b = ChangePointStream.poisson(2.0, 0.4, expected_run_length=300, prune=0, merge_bins=None)
     for yt in y:
         assert a.next_logpmf(yt)[0] == pytest.approx(b.next_logpmf(yt)[0], abs=1e-8)
         a.update(yt)
@@ -118,6 +119,45 @@ def test_pruning_costs_almost_nothing():
         ra, rb = a.rate_now(), b.rate_now()
         assert ra[0] == pytest.approx(rb[0], rel=1e-7) and ra[1] == pytest.approx(rb[1], rel=1e-7)
     assert a.n_runs < b.n_runs / 3
+
+
+@pytest.mark.parametrize("kind", ["poisson", "bernoulli"])
+def test_merging_old_run_lengths_bounds_the_state_and_costs_little(kind):
+    """A long quiet stretch, then a change: every run length since the start stays
+    plausible, so without merging the state grows with the stretch; with it, with the
+    log of it, and the answers barely move."""
+    rng = np.random.default_rng(13)
+    if kind == "poisson":
+        x = np.concatenate([rng.poisson(3.0, 1800), rng.poisson(5.0, 300)]).astype(float)
+        n = np.ones_like(x)
+        make = lambda **kw: ChangePointStream.poisson(1.0, 0.25, expected_run_length=1000, **kw)
+    else:
+        n = np.full(2100, 25.0)
+        x = np.concatenate([rng.binomial(25, 0.2, 1800), rng.binomial(25, 0.3, 300)]).astype(float)
+        make = lambda **kw: ChangePointStream.bernoulli(1000, **kw)
+    merged, exact = make(), make(merge_bins=None)
+    u = rng.random(len(x))
+    worst = dict(rate=0.0, sd=0.0, pit=0.0, recent=0.0)
+    most = [0, 0]  # the largest states, merged and not (the change prunes the runs spanning it)
+    for t in range(len(x)):
+        q1, q2 = merged.pit(x[t], n[t], u=u[t]), exact.pit(x[t], n[t], u=u[t])
+        worst["pit"] = max(worst["pit"], abs(q1 - q2))
+        merged.update(x[t], n[t])
+        exact.update(x[t], n[t])
+        (r1, s1), (r2, s2) = merged.rate_now(), exact.rate_now()
+        worst["rate"] = max(worst["rate"], abs(r1 / r2 - 1))
+        worst["sd"] = max(worst["sd"], abs(s1 / s2 - 1))
+        worst["recent"] = max(worst["recent"], abs(merged.p_change_within(20) - exact.p_change_within(20)))
+        most = [max(most[0], merged.n_runs), max(most[1], exact.n_runs)]
+    bound = merged.exact_recent + merged.merge_bins * np.log2(len(x) / merged.exact_recent) + 2
+    assert most[0] <= bound and most[1] > 1500, most
+    assert worst["rate"] < 1e-4 and worst["sd"] < 1e-3 and worst["pit"] < 1e-4 and worst["recent"] < 1e-4, worst
+    # the run-length posterior still sums to 1, and is the same where exact (up to exact_recent)
+    lengths, p = merged.run_length_posterior()
+    assert p.sum() == pytest.approx(1.0, abs=1e-12)
+    l2, p2 = exact.run_length_posterior()
+    short = lengths <= merged.exact_recent
+    np.testing.assert_allclose(p[short], p2[np.isin(l2, lengths[short])], atol=1e-6)
 
 
 def test_stream_predictive_pmf_and_cdf_agree():

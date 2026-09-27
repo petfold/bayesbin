@@ -391,10 +391,16 @@ very sensitive to it within a factor of a few. **The prior** (`alpha`, `beta`,
 or `sigma`, `gamma` for success rates) should cover the rates you expect: a new
 segment's rate is drawn from it.
 
-**Cost**: each update costs time in proportion to the number of run lengths
-still plausible, roughly the length of the current segment (here up to 4000,
-about 1 ms per interval). `max_runs=` caps it by keeping only the most probable
-ones, which is approximate (here: 1% on the rates at a cap of 300).
+**Cost**: each update costs time in proportion to the number of possible
+times since the last change that the model keeps. In a long quiet stretch they
+all stay plausible, so the recent ones (up to `exact_recent=128` intervals) are
+kept exactly and older ones are merged, 32 buckets per doubling of length
+(`merge_bins=32`), each into a single component with the same rate mean and
+variance. The state then grows with the *logarithm* of the segment's length:
+here at most 245 components instead of 4006, and a 30,000-interval quiet
+stream keeps 313 instead of 30,000, 17 times faster, while the rates, error
+bars and surprise values move by less than 10⁻⁴ (in the tests). `merge_bins=None`
+keeps every run exactly.
 
 ## 11. Choosing the settings
 

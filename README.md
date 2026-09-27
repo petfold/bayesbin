@@ -50,8 +50,8 @@ distribution of the next count, exactly as a batch fit of the data so far gives
 them); see the User Guide's Tutorial 5. For endless streams, `ChangePointStream`
 is Bayesian online change-point detection with the same conjugate models:
 the rate now, the probability of a recent change and calibrated surprise
-(randomized PIT) for each new count, at a cost per count set by the length of
-the current segment, not of the stream (Tutorial 6).
+(randomized PIT) for each new count, at a cost per count that grows with the
+logarithm of the current segment's length, not with the stream (Tutorial 6).
 
 By default predictions average over every M, as the paper recommends;
 `m_mass=0.9` restricts them to the credible range of M, which is what the
@@ -119,7 +119,7 @@ For data that arrive over time, with the same two likelihoods:
 | class | prior over segmentations | gives | cost per new interval |
 |---|---|---|---|
 | `OnlineBinning` | as `fit`: up to `max_boundaries` boundaries | exactly what `fit` gives for the latest interval, the next count's predictive; `fit()` for the past | grows with the data so far |
-| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT | grows with the current segment |
+| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT | grows with the log of the current segment (old run lengths merged) |
 
 ## The C++ version: binsdfc-fb
 
@@ -142,7 +142,7 @@ the PyPI package. Timings against bayesbin are in the tables below.
 
 ## Verification
 
-`pytest` (56 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
+`pytest` (58 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](https://github.com/petfold/bayesbin/tree/main/reference)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -177,7 +177,8 @@ the PyPI package. Timings against bayesbin are in the tables below.
   scaling regression that leaves the results right but slow.
 - `ChangePointStream` against enumeration of every segmentation (marginal
   likelihood, run-length posterior, current rate); its PIT uniform on data from
-  the model and not on overdispersed data; pruning against the exact recursion.
+  the model and not on overdispersed data; pruning and the merging of old run
+  lengths against the exact recursion (and the merged state within its bound).
 - The User Guide's examples run and print what the guide says they print.
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.
@@ -203,12 +204,13 @@ the PyPI package. Timings against bayesbin are in the tables below.
 - Not yet ported from the original: latency posteriors, signal separation
   levels, hyperparameter optimisation (`-P`), bin-boundary position posteriors
   for a fixed M (`-p`).
-- Streams: `ChangePointStream`'s state grows with the current segment's length
-  (every run length since the last change stays plausible); `max_runs` caps it,
-  approximately. `OnlineBinning`'s cost per interval grows with the data so far.
-- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): a bounded stream
-  state (merging old run lengths), cyclic profiles (a bin may wrap round the end
-  of a day or week), 2-D via recursive partitions.
+- Streams: `ChangePointStream` keeps the run lengths up to `exact_recent`
+  exactly and merges older ones into logarithmic buckets (moment matching),
+  which bounds its state at a cost of ~10⁻⁵ in its answers; `merge_bins=None`
+  keeps every run. `OnlineBinning`'s cost per interval grows with the data so far.
+- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): a hazard learnt from
+  the data, cyclic profiles (a bin may wrap round the end of a day or week), 2-D
+  via recursive partitions.
 
 ## Speed against the original
 

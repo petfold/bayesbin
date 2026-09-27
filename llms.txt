@@ -49,7 +49,7 @@ cp.rate_now() -> (mean, sd); cp.p_change_within(k); cp.run_length_posterior() ->
 cp.next_pmf(x, size), cp.next_cdf(x, size), cp.next_logpmf(x, size); cp.log_marginal; cp.n_runs
 ```
 
-Cost per update ~ number of plausible run lengths (~ length of the current segment); `max_runs=K` caps it (approximate, ~1% on rates at K=300 in a test).
+Cost per update ~ components kept: run lengths up to exact_recent=128 exactly, older ones merged into merge_bins=32 buckets per octave of length (moment-matched; state grows with log of the current segment's length; answers move by <1e-4 in tests). merge_bins=None keeps every run (state then grows with the segment); max_runs=K caps by dropping (coarser).
 Bernoulli pmfs are of the count (include C(n, s)).
 
 `fit` returns `BinningResult` (arrays indexed by interval k = 0..T-1, T = len(s) or len(y)):

@@ -11,13 +11,18 @@
    online change-point detection (Adams & MacKay 2007; Fearnhead & Liu 2007): a
    constant hazard, the same Beta and Gamma segment evidences, run lengths below
    1e-12 dropped. Exact against enumeration; calibrated PIT on data from the
-   model. Left: the state grows with the current segment's length (every run
-   length since the last change stays plausible: a Bayes factor near 1 per
-   position, not a tiny one), so a long quiet stream gets slower; `max_runs`
-   drops the least probable, which costs ~1% on the rates. Merging old run
-   lengths into one (their statistics are nearly the same) instead of dropping
-   them would bound it better. Also: a hazard learnt from the data (a Beta prior
-   on it), fixed-lag smoothing, and the fused kernels for the updates.
+   model. Its state is bounded by merging old run lengths (longer than
+   `exact_recent`) within buckets of log length, `merge_bins` per octave, into
+   one moment-matched component: in a long quiet stretch every run length stays
+   plausible (a Bayes factor near 1 per position), and neighbouring ones differ
+   by ~1/√ℓ posterior sd. At 32 per octave, against every run: 30,000 quiet
+   intervals 313 components not 30,000 (17x faster); rate, sd, PIT within
+   2e-6, 3e-5, 1e-6; with frequent changes in counts of ~500, 3e-6, 3e-4, 1e-5
+   (16 per octave was 100x worse there). A trap on the way: bucketing a merged
+   component by its *shortest* run keeps it in the first bucket, absorbing every
+   run after it (errors of 60% in the sd); by its longest run it ages. Left: a
+   hazard learnt from the data (a Beta prior on it), fixed-lag smoothing, the
+   fused kernels for the updates.
 3. **Cyclic profiles**: a bin may wrap round the end of a day or week.
 4. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.

@@ -12,10 +12,22 @@ The state is the posterior over the current run length (how many intervals
 since the last change) with each run's sufficient statistics. A new interval
 either extends a run, weighted by that run's predictive probability of the new
 count, or starts a new one, with the prior predictive. Runs whose probability
-falls below `prune` are dropped: the cost per interval is the number of
-plausible run lengths, not the length of the stream. (Dropping them is safe in
-practice, not guaranteed: a dropped run cannot come back. prune=0 keeps every run
-and is exact.)
+falls below `prune` are dropped. (Dropping them is safe in practice, not
+guaranteed: a dropped run cannot come back. prune=0 keeps every run and is exact.)
+
+In a long quiet stretch every run length since the last change stays plausible,
+so the state would grow with the segment. It is bounded instead by merging old
+run lengths: those longer than `exact_recent` fall into buckets of equal width in
+log length (`merge_bins` per octave, as the geometric cascade does with time), and
+the runs in one bucket become one component, the Gamma (or Beta) posterior with
+the same rate mean and variance as their mixture. Neighbouring old runs differ by
+about 1/√ℓ posterior sd, so the error is small, and the state grows with the log
+of the segment's length: exact_recent + merge_bins·log2(ℓ / exact_recent)
+components at most. Against keeping every run, with the default 32 per octave:
+a 30,000-interval quiet stream kept 313 components instead of 30,000 (18x
+faster), and the rate, its sd and the PIT moved by at most 2e-6, 3e-5 and 1e-6;
+on counts of ~500 with a change every few hundred intervals, 3e-6, 3e-4, 1e-5
+(16 per octave: 5e-4, 4e-2, 2e-3). merge_bins=None keeps every run.
 
     cp = ChangePointStream.poisson(alpha=1.0, beta=0.25, expected_run_length=200)
     for y in stream:
@@ -52,22 +64,28 @@ class ChangePointStream:
     with ChangePointStream.poisson(...) or ChangePointStream.bernoulli(...)."""
 
     def __init__(self, kind: str, prior: tuple[float, float], expected_run_length: float,
-                 prune: float = 1e-12, max_runs: int | None = None):
+                 prune: float = 1e-12, max_runs: int | None = None, merge_bins: int | None = 32,
+                 exact_recent: int = 128):
         if prior[0] <= 0 or prior[1] <= 0:
             raise ValueError("the prior's parameters must be positive")
         if not expected_run_length >= 1:
             raise ValueError("expected_run_length must be >= 1")
         if not 0 <= prune < 1:
             raise ValueError("prune must be in [0, 1)")
+        if merge_bins is not None and merge_bins < 1:
+            raise ValueError("merge_bins must be >= 1 (or None: no merging)")
         self.kind, self.prior, self.prune, self.max_runs = kind, prior, prune, max_runs
+        self.merge_bins, self.exact_recent = merge_bins, exact_recent
         self.hazard = 1.0 / expected_run_length
         self._log_h = np.log(self.hazard)
         self._log_1mh = np.log1p(-self.hazard) if self.hazard < 1 else _NEG_INF
         self.T = 0
         self.log_marginal = 0.0  # log P(all counts so far): the sum of the log predictives
-        # the runs: log posterior, length, and totals (s, g) or (y, e); empty before any data
+        # the runs: log posterior, the range of lengths each stands for (lo == hi unless merged),
+        # and totals (s, g) or (y, e); empty before any data
         self._logp = np.zeros(0)
-        self._len = np.zeros(0, np.int64)
+        self._lo = np.zeros(0, np.int64)
+        self._hi = np.zeros(0, np.int64)
         self._u = np.zeros(0)
         self._v = np.zeros(0)
         self._cache = None  # (T, x, size, per-component log pmf of x): pit() then update() on x
@@ -196,10 +214,11 @@ class ChangePointStream:
         lp -= step
         du, dv = (x, size - x) if self.kind == "bernoulli" else (x, size)
         if self.T == 0:
-            logp, ln, uu, vv = lp[-1:], np.ones(1, np.int64), np.array([du]), np.array([dv])
+            logp, lo, hi = lp[-1:], np.ones(1, np.int64), np.ones(1, np.int64)
+            uu, vv = np.array([du]), np.array([dv])
         else:  # the runs extended by one, then the new segment (length 1)
             logp = lp
-            ln = np.append(self._len + 1, 1)
+            lo, hi = np.append(self._lo + 1, 1), np.append(self._hi + 1, 1)
             uu = np.append(self._u + du, du)
             vv = np.append(self._v + dv, dv)
         keep = logp >= np.log(self.prune) if self.prune > 0 else np.isfinite(logp)
@@ -209,21 +228,91 @@ class ChangePointStream:
             keep[np.argsort(logp)[-self.max_runs:]] = True
         logp = logp[keep]
         self._logp = logp - _lse(logp)  # renormalised after pruning
-        self._len, self._u, self._v = ln[keep], uu[keep], vv[keep]
+        self._lo, self._hi, self._u, self._v = lo[keep], hi[keep], uu[keep], vv[keep]
+        if self.merge_bins is not None:
+            self._merge()
         self.T += 1
+
+    def _merge(self) -> None:
+        """Merge the runs longer than exact_recent that share a bucket of log length."""
+        old = np.flatnonzero(self._lo > self.exact_recent)
+        if len(old) < 2:
+            return
+        # a component's bucket is that of its longest run, which ages by one each interval
+        # (by its shortest, a merged component would stay put and absorb every run after it)
+        bucket = np.floor(np.log2(self._hi[old]) * self.merge_bins).astype(np.int64)
+        keys, inv, counts = np.unique(bucket, return_inverse=True, return_counts=True)
+        if (counts < 2).all():
+            return
+        drop = np.zeros(len(self._logp), bool)
+        new = []
+        for g in np.flatnonzero(counts > 1):
+            idx = old[inv == g]
+            merged = self._moment_match(idx)
+            if merged is not None:
+                drop[idx] = True
+                new.append(merged)
+        if not new:
+            return
+        keep = ~drop
+        lp, lo, hi, u, v = (np.array(c) for c in zip(*new))
+        self._logp = np.append(self._logp[keep], lp)
+        self._lo = np.append(self._lo[keep], lo.astype(np.int64))
+        self._hi = np.append(self._hi[keep], hi.astype(np.int64))
+        self._u, self._v = np.append(self._u[keep], u), np.append(self._v[keep], v)
+
+    def _moment_match(self, idx: np.ndarray):
+        """(log p, lo, hi, u, v) of one component for the runs idx: their total probability and
+        the conjugate posterior with the mixture's rate mean and variance (variance in the
+        two-pass form); None if no valid one exists (a Beta mixture too spread out)."""
+        lw = self._logp[idx]
+        top = lw.max()
+        w = np.exp(lw - top)
+        W = w.sum()
+        p, q = self.prior
+        A, B = self._u[idx] + p, self._v[idx] + q
+        if self.kind == "bernoulli":
+            n = A + B
+            m, s = A / n, A * B / (n**2 * (n + 1))
+        else:
+            m, s = A / B, A / B**2
+        M = float(w @ m) / W
+        V = float(w @ (s + (m - M) ** 2)) / W
+        if not V > 0:
+            return None
+        if self.kind == "bernoulli":
+            n_ = M * (1 - M) / V - 1
+            if not n_ > 0:
+                return None
+            A_, B_ = M * n_, (1 - M) * n_
+        else:
+            A_, B_ = M * M / V, M / V
+        return (top + np.log(W), self._lo[idx].min(), self._hi[idx].max(), A_ - p, B_ - q)
 
     # --- the state -----------------------------------------------------------------
 
     def run_length_posterior(self) -> tuple[np.ndarray, np.ndarray]:
         """(lengths, probabilities): P(the current segment is ℓ intervals long | data), for the
-        run lengths kept, in increasing length."""
-        o = np.argsort(self._len)
-        return self._len[o].copy(), np.exp(self._logp[o])
+        run lengths kept, in increasing length. A merged component's probability is spread
+        evenly over the lengths it stands for (exact up to exact_recent)."""
+        lo, hi, p = self.run_length_ranges()
+        n = hi - lo + 1
+        lengths = np.concatenate([np.arange(a, b + 1) for a, b in zip(lo, hi)]) if len(lo) else lo
+        return lengths, np.repeat(p / n, n)
+
+    def run_length_ranges(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(lo, hi, probabilities): the state as kept, one row per component, which stands for
+        the run lengths lo..hi (lo == hi unless merged), in increasing length."""
+        o = np.argsort(self._lo)
+        return self._lo[o].copy(), self._hi[o].copy(), np.exp(self._logp[o])
 
     def p_change_within(self, k: int) -> float:
         """P(a new segment started within the last k intervals | data) = P(run length <= k)
-        (the first interval counts as a start: for k >= T this is 1)."""
-        return float(np.exp(self._logp[self._len <= k]).sum())
+        (the first interval counts as a start: for k >= T this is 1). Exact for k up to
+        exact_recent; a merged component counts in proportion to its lengths up to k."""
+        p = np.exp(self._logp)
+        frac = np.clip((k - self._lo + 1) / (self._hi - self._lo + 1), 0.0, 1.0)
+        return float(p @ frac)
 
     def rate_now(self) -> tuple[float, float]:
         """The rate in the latest interval given the data so far, and its standard deviation
@@ -244,5 +333,5 @@ class ChangePointStream:
 
     @property
     def n_runs(self) -> int:
-        """How many run lengths the state keeps (the cost per interval)."""
+        """How many components the state keeps (the cost per interval)."""
         return len(self._logp)
