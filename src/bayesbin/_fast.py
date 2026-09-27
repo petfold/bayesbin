@@ -28,6 +28,10 @@ part, with BLAS itself held to one thread (threadpoolctl) while they run. Lettin
 OpenBLAS thread the products instead made its idle workers spin against numba's.
 The parts are fixed, not one per thread, and combined in a fixed order, so the
 results do not depend on the number of threads.
+
+The kernels release the GIL (nogil), so separate fits can run in parallel from a
+thread pool (under numba's TBB or OpenMP threading layer; workqueue does not allow
+concurrent calls).
 """
 
 from __future__ import annotations
@@ -44,31 +48,6 @@ _BLAS = ThreadpoolController()
 def one_blas_thread():
     """Context: BLAS on one thread (the kernels split the products over numba's threads)."""
     return _BLAS.limit(limits=1, user_api="blas")
-
-
-def concurrent_threads():
-    """Numba threads for each of the two passes run at once from two Python threads: half
-    of numba's, or 0 (one pass after the other) on one thread or when the threading layer
-    does not allow concurrent calls (workqueue). Half each measured better than all each
-    under TBB, which shares one pool of workers between them."""
-    import numba
-    from numba.np.ufunc import parallel
-
-    n = numba.get_num_threads()
-    if n < 2:
-        return 0
-    try:
-        parallel._launch_threads()  # the layer is known once numba's threads are up
-        layer = numba.threading_layer()
-    except Exception:  # noqa: BLE001 (unknown: run the passes one after the other)
-        return 0
-    return n // 2 if layer in ("tbb", "omp") else 0
-    n = numba.get_num_threads()
-    if layer == "tbb":
-        return n
-    if layer == "omp":
-        return max(1, n // 2)
-    return 0
 
 _NEG = -np.inf
 _TINY = np.finfo(np.float64).tiny

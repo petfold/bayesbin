@@ -52,9 +52,9 @@ Threads: numba's, `NUMBA_NUM_THREADS` or `numba.set_num_threads(n)`; the
 default is every logical CPU, and hyperthreads gain nothing here, so set it to
 the number of physical cores for the best time. While a fit runs, the fused
 path holds BLAS to one thread and splits the matrix products over numba's
-threads itself, and runs the forward and backward passes at once (half the
-threads each; not under numba's `workqueue` threading layer, which does not
-allow it, nor on one thread).
+threads itself. The kernels release the GIL, so many separate fits (many
+short series) can also run in parallel from a thread pool, each on one numba
+thread (under numba's TBB or OpenMP threading layer).
 
 ## What it is for
 
@@ -161,7 +161,7 @@ process).
 | T=600, M≤10, rate ± sd | 50.0 s | 12.4 s | 0.033 s | 0.021 s | 0.050 s | 0.023 s | 0.012 s |
 | T=600, M≤10, evidence only | 0.065 s | — | 0.020 s | 0.017 s | 0.014 s | 0.008 s | 0.005 s |
 | T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.14 s | 0.083 s | 0.035 s |
-| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s | 0.088 s |
+| T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s | 0.099 s |
 
 `binsdfc-fb` is the original with the forward–backward SDF, the matrix-vector
 central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](cpp/binsdfc-fb/README.fb.md)); best
@@ -179,9 +179,8 @@ of 5 runs. (binsdfc itself always runs 4 threads.)
   and scales almost 4×. bayesbin's NumPy path runs on one thread outside BLAS;
   its fused path runs every step on numba's threads (the matrix products split
   into fixed parts) except the steps inside each 256-column block of the
-  dynamic programme, which are sequential in M. The forward and backward passes
-  run at once, half the threads each, so that those steps overlap. It scales
-  about 3.1× on 4 cores.
+  dynamic programme, which are sequential in M, and scales about 2.9× on 4
+  cores.
 
 ### Larger problems
 
@@ -193,10 +192,10 @@ run each; the laptop was thermally throttled.
 
 | T | M ≤ | binsdfc-fb, 1 core | binsdfc-fb, 4 threads | binsdfc-fb memory | bayesbin (NumPy), 1 core | bayesbin + numba, 1 core | bayesbin + numba, 4 threads |
 |---|---|---|---|---|---|---|---|
-| 2016 (1 week) | 30 | 0.25 s | 0.10 s | 12 MB | 0.54 s, 88 MB | 0.27 s, 175 MB | 0.11 s, 188 MB |
-| 4032 (2 weeks) | 60 | 1.44 s | 0.45 s | 19 MB | 1.99 s, 110 MB | 1.18 s, 189 MB | 0.48 s, 211 MB |
-| 8064 (4 weeks) | 120 | 9.2 s | 2.9 s | 44 MB | 8.7 s, 179 MB | 5.8 s, 235 MB | 1.85 s, 273 MB |
-| 12096 (6 weeks) | 120 | 20.3 s | 6.3 s | 61 MB | 18.6 s, 250 MB | 13.0 s, 271 MB | 4.1 s, 319 MB |
+| 2016 (1 week) | 30 | 0.25 s | 0.10 s | 12 MB | 0.54 s, 88 MB | 0.27 s, 175 MB | 0.11 s, 177 MB |
+| 4032 (2 weeks) | 60 | 1.44 s | 0.45 s | 19 MB | 1.99 s, 110 MB | 1.18 s, 189 MB | 0.53 s, 192 MB |
+| 8064 (4 weeks) | 120 | 9.2 s | 2.9 s | 44 MB | 8.7 s, 179 MB | 5.8 s, 235 MB | 2.0 s, 242 MB |
+| 12096 (6 weeks) | 120 | 20.3 s | 6.3 s | 61 MB | 18.6 s, 250 MB | 13.0 s, 271 MB | 4.3 s, 280 MB |
 | 24192 (12 weeks) | 120 | | 86 s | 116 MB | | | |
 
 - binsdfc-fb memory is O(T·M): no T×T array is kept. (Before: ≈14·T²
