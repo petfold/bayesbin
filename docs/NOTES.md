@@ -18,10 +18,11 @@
    hyperparameter optimisation, boundary position posteriors for a fixed M.
 4. **2-D** via recursive partitions (below: where the method stops being 1-D).
 5. **The last sequential step**: the steps inside each 256-column block of the
-   dynamic programme (about 15% of the time on 4 threads). A `prange` over
-   columns per step cost more in launches than it saved; a narrower block for
-   the inside rows, or running the forward and backward passes concurrently,
-   are the options left.
+   dynamic programme. A `prange` over columns per step cost more in launches
+   than it saved. Running the forward and backward passes at once, half the
+   threads each, overlaps them, but gained only 5-10% on 4 cores (the passes
+   share memory bandwidth and cache: each streams tens of MB of gain slices per
+   block). A narrower block for the inside rows is the option left.
 
 ## The papers
 

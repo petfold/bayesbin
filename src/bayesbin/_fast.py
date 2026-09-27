@@ -45,6 +45,31 @@ def one_blas_thread():
     """Context: BLAS on one thread (the kernels split the products over numba's threads)."""
     return _BLAS.limit(limits=1, user_api="blas")
 
+
+def concurrent_threads():
+    """Numba threads for each of the two passes run at once from two Python threads: half
+    of numba's, or 0 (one pass after the other) on one thread or when the threading layer
+    does not allow concurrent calls (workqueue). Half each measured better than all each
+    under TBB, which shares one pool of workers between them."""
+    import numba
+    from numba.np.ufunc import parallel
+
+    n = numba.get_num_threads()
+    if n < 2:
+        return 0
+    try:
+        parallel._launch_threads()  # the layer is known once numba's threads are up
+        layer = numba.threading_layer()
+    except Exception:  # noqa: BLE001 (unknown: run the passes one after the other)
+        return 0
+    return n // 2 if layer in ("tbb", "omp") else 0
+    n = numba.get_num_threads()
+    if layer == "tbb":
+        return n
+    if layer == "omp":
+        return max(1, n // 2)
+    return 0
+
 _NEG = -np.inf
 _TINY = np.finfo(np.float64).tiny
 # the parallel loops split work into a fixed number of parts (not one per thread), and
@@ -114,7 +139,7 @@ def _base(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse):
     return out
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def base(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse):
     """b[k] = log evidence of 0..k as one bin."""
     if code == 0:
@@ -158,7 +183,7 @@ def _gain_slice(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1,
     return E, c, reach
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True, nogil=True, parallel=True)
 def gain_slice(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1, lo):
     """E[r, u] = exp(G[r, u] - c[u]) for rows r < c1-1, where G[r, u] = L[r+1, c0+u] - b[c0+u]
     + b[r] (0 where r >= c0+u) and c[u] is the column maximum (0 for a column with no finite
@@ -170,7 +195,7 @@ def gain_slice(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1, 
     return _gain_slice(2, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1, lo)
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True, nogil=True, parallel=True)
 def rows_before(phi, M, c0, lo, E):
     """The rows before a block, for all M steps at once: X[m-1, r] = exp(phi[m-1, r] - q[m-1])
     for r < c0 (q the row maximum, 0 for a row with no finite entry; flushed to 0 below
@@ -261,7 +286,7 @@ def _block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
     return n_exact
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
                 phi, E, before, q, qfin, cmax, reach, c0, c1, floor, lo):
     """The steps m = 1..M for the columns c0..c1-1: the rows before the block come in as
@@ -347,7 +372,7 @@ def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
         ends[b0 + j] += sw
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True, nogil=True, parallel=True)
 def tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
                     A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends):
     """For the bins of one tile (starts a0..a1-1, ends b0..b0+nb-1): W = cscale C[a, b]
@@ -365,7 +390,7 @@ def tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
                          A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends)
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True, nogil=True, parallel=True)
 def fold_models(log_c, right):
     """R[i, b] = log Σ_j exp(log_c[i+j] + right[j, b]) over the models with a weight, as
     core._fold_models: per b, one exp per term and one log per entry."""

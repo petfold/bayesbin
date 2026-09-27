@@ -27,6 +27,7 @@ All arithmetic is in log space.
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -464,9 +465,36 @@ def _backward(ev, max_m: int, *, exact: bool = False) -> np.ndarray:
             f = _forward_fused(kern[0], T, max_m, True)
         else:
             f = _forward(None, max_m, _blk=(T, _reversed_blocks(T, blk)))
-    bwd = np.full((max_m + 1, T), _NEG_INF)
+    return _reversed_to_bwd(f)
+
+
+def _reversed_to_bwd(f: np.ndarray) -> np.ndarray:
+    """bwd from f, the forward programme on the reversed sequence."""
+    T = f.shape[1]
+    bwd = np.full(f.shape, _NEG_INF)
     bwd[:, :-1] = f[:, T - 2::-1]  # bwd[j, k] = f[j, T-2-k]
     return bwd
+
+
+def _passes(model, max_m: int) -> tuple[np.ndarray, np.ndarray]:
+    """_forward and _backward of a model. With the fused kernels and more than one numba
+    thread, the two passes, which are independent, run at once on two Python threads with
+    half of numba's threads each (where the threading layer allows it): the steps inside
+    each block, one after another in M, then overlap. 5-10% faster than one pass after
+    the other on 4 cores; they share memory bandwidth and cache."""
+    kern = model._kernel() if _FAST is not None else None
+    n = _FAST.concurrent_threads() if kern is not None else 0
+    if n == 0:
+        return _forward(model, max_m), _backward(model, max_m)
+    import numba
+
+    def run(reverse):
+        numba.set_num_threads(n)  # per thread: a new thread does not inherit the caller's
+        return _forward_fused(kern[0], model.T, max_m, reverse)
+
+    with _FAST.one_blas_thread(), ThreadPoolExecutor(2) as pool:  # BLAS held once, for both
+        fwd, rev = pool.submit(run, False), pool.submit(run, True)
+        return fwd.result(), _reversed_to_bwd(rev.result())
 
 
 @dataclass
@@ -682,7 +710,7 @@ def fit(model, max_boundaries: int = 10, *, m_mass: float | None = None,
         else:
             fwd, bwd = _forward(L, max_m), _backward(L, max_m)
     else:  # block by block from the model: O(T·M) memory
-        fwd, bwd = _forward(model, max_m), _backward(model, max_m)
+        fwd, bwd = _passes(model, max_m)
     log_ev = np.array([fwd[m, T - 1] - _log_binom(T - 1, m) for m in range(max_m + 1)])
     log_ev += model.log_data_constant()
     post = np.exp(log_ev - logsumexp(log_ev))
