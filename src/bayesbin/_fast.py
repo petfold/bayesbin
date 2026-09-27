@@ -230,15 +230,17 @@ def rows_before(phi, M, c0, lo, E):
 
 
 @njit(inline="always", cache=True)
-def _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, phi, m, k):
+def _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, phi, m, k, cu):
     """phi[m, k] exactly: log Σ_{r<k} exp(phi[m-1, r] + G[r, k]), in one pass (a running
     maximum, the sum rescaled when it rises; terms more than _SKIP nats below it, far
-    below the precision of the result, not exponentiated)."""
+    below the precision of the result, not exponentiated). cu, the column's largest gain,
+    bounds every row's term by phi[m-1, r] + cu: a row whose bound is already that far
+    below is skipped before its bin evidence is looked up."""
     mx = _NEG
     acc = 0.0
     for r in range(k - 1, -1, -1):  # from the last row: the largest terms tend to be late
         pr = phi[m - 1, r]
-        if pr == _NEG:
+        if pr == _NEG or pr + cu < mx - _SKIP:
             continue
         a, bb = _at(T, reverse, r + 1, k)
         t = pr + _iec(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, a, bb) - b[k] + b[r]
@@ -298,12 +300,12 @@ def _block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
             for i in prange(nredo):
                 k = redo[i]
                 phi[m, k] = _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
-                                          phi, m, k)
+                                          phi, m, k, cmax[k - c0])
         else:
             for i in range(nredo):
                 k = redo[i]
                 phi[m, k] = _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
-                                          phi, m, k)
+                                          phi, m, k, cmax[k - c0])
     return n_exact
 
 

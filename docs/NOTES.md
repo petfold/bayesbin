@@ -83,6 +83,17 @@
   nats below the running maximum not exponentiated) and runs a step's columns
   in parallel: 0.09 s on 4 threads. With stronger steps (rates 20 → 400) most
   columns still fall back, and fast: T=4800 with 16 steps, 31 s → 3.2 s.
+  Counts in the hundreds or thousands per interval are such data (a week of
+  5-minute slots at 1000 per slot: 79% of columns fall back). Each row's term
+  is bounded by its step value plus the column's largest gain, so rows already
+  more than 60 nats below the running maximum skip the bin-evidence lookup:
+  25-35% faster (that week: 1.43 s → 0.97 s on 4 threads). The bound is loose,
+  and the limit is structural: even knowing the final maximum it would leave
+  77% of rows to evaluate, while only 2% of terms matter. Picking those out
+  safely needs pruning in the style of PELT (Killick et al. 2012), whose
+  guarantee is for the penalised best segmentation, not for exact sums over
+  segmentations with a given number of bins. Computing gammaln by Stirling's
+  series instead of the table lookups was slower (18 ns against 9 ns a term).
 - The sd, √(E[f²] − E[f]²), cancels where a rate is large and tightly known:
   at rate 400 ± 1.6 an error in the moments grows 6·10⁴ times. The error that
   mattered was one factor common to both moments: the computed coverage (the
