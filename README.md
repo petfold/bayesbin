@@ -97,7 +97,7 @@ to two dimensions.
 
 ## Verification
 
-`pytest` (39 tests; 4 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
+`pytest` (40 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):

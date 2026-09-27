@@ -18,6 +18,8 @@
 #include <limits>
 #include <algorithm>
 #include <memory>
+#include <cstdio>
+#include <cstdlib>
 #if defined(__SSE__) || defined(__x86_64__)
 #include <xmmintrin.h>
 #endif
@@ -107,6 +109,7 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 	vector<double> v((size_t)ng * RG), c(CB);
 	double sums[CBMAX];
 	int redo[CBMAX];
+	long nExact = 0, nColumns = 0;  // for BINSDFC_FB_STATS
 	// phi_m[k] exactly, in one pass: a running maximum, the sum rescaled when it rises; terms more
 	// than SKIP nats below it (< e^-60 of the result each) not exponentiated, and, as a row's term
 	// is at most prev[r] + cu (cu: the column's largest gain), rows already that far below skipped
@@ -195,11 +198,13 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 			long work = 0;
 			for (int k = k0; k < k1; k++) {
 				if (k < m) { fwd[m][k] = NEG; continue; }  // needs m boundaries before k
+				nColumns++;
 				const double sk = sums[k - k0];
 				if (sk >= floor) { fwd[m][k] = log(sk) + p + c[k - k0]; continue; }
 				redo[nredo++] = k;  // underflow could matter: the exact sum
 				work += k;
 			}
+			nExact += nredo;
 			// the exact columns of a step are independent: in parallel when there is enough work
 			#pragma omp parallel for schedule(dynamic) if (work >= 20000)
 			for (int i = 0; i < nredo; i++) {
@@ -231,6 +236,9 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 	fwd[0] = b;
 	for (int m = 1; m <= mmax; m++)
 		for (int k = 0; k < K; k++) fwd[m][k] += s[k];
+	// BINSDFC_FB_STATS set: how many columns needed the exact sum (a test watches the scaling with it)
+	if (std::getenv("BINSDFC_FB_STATS"))
+		std::fprintf(stderr, "fb: fastForward K=%d mmax=%d exact columns %ld of %ld\n", K, mmax, nExact, nColumns);
 }
 
 /** the last central iteration of the plain evidences, for reuse by forwardBackward:

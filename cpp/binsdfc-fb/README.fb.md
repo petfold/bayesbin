@@ -95,6 +95,10 @@ unmodified original in `../../reference/binsdfc-0.1/`).
     M ≤ 30: 0.82 s → 0.30 s on one thread, 0.80 s → 0.14 s on four. The
     printed output is unchanged, on those data and on the test and benchmark
     data (-M and -v), and the speed elsewhere within noise.
+  - `BINSDFC_FB_STATS=1` in the environment: each central iteration reports on
+    stderr how many columns needed the exact sum, e.g. `fb: fastForward K=600
+    mmax=10 exact columns 0 of 5945`. The results are right either way; only
+    this count shows the scaling working, and a test watches it.
 
 With the upper bound on the firing probability (the incomplete-Beta prior) the
 original paths are used, as before.

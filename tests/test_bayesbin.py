@@ -246,6 +246,32 @@ def test_forward_backward_cpp_matches_bayesbin_and_the_original(mass):
     np.testing.assert_allclose(fb[:, 2], r.rate_std, rtol=6e-6)
 
 
+def _cpp_exact_share(args):
+    """(exact columns, all columns) over the C++ run's forward passes, from BINSDFC_FB_STATS."""
+    import os
+    import subprocess
+
+    run = subprocess.run([str(_FB), *args], capture_output=True, text=True, check=True,
+                         env={**os.environ, "BINSDFC_FB_STATS": "1", "OMP_NUM_THREADS": "2"})
+    lines = [line.split() for line in run.stderr.splitlines() if line.startswith("fb: fastForward")]
+    assert lines, "no BINSDFC_FB_STATS lines: is the build current?"
+    return sum(int(f[6]) for f in lines), sum(int(f[8]) for f in lines)
+
+
+@pytest.mark.skipif(not _FB.exists(), reason="cpp/binsdfc-fb not built (see its README.fb.md)")
+def test_forward_backward_cpp_keeps_columns_on_the_fast_path():
+    """The scaling of the C++'s forward passes, watched through their count of columns that
+    needed the exact sum: correct results either way, so only this shows it. None on the
+    test data; on 400 trials with strong steps 23%. (With the prior's normaliser left out
+    of the reference, a slip made once while porting: 78% and 41%.)"""
+    exact, total = _cpp_exact_share(["-s", "-100", "-e", "500", "-m", "10", "-v", "-l", "0",
+                                     str(DATA / "testdata_seed1.txt")])
+    assert total > 0 and exact == 0
+    exact, total = _cpp_exact_share(["-s", "0", "-e", "400", "-m", "12", "-v", "-l", "0.9",
+                                     str(DATA / "strong_400trials.txt")])
+    assert exact < 0.32 * total
+
+
 @pytest.mark.skipif(not _FB.exists(), reason="cpp/binsdfc-fb not built (see its README.fb.md)")
 def test_forward_backward_cpp_on_data_that_exercises_the_underflow_bounds():
     # 400 trials, rate switching 0.02 / 0.3 every 50 intervals: evidences span ~10^4 nats
