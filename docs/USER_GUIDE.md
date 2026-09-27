@@ -13,18 +13,19 @@ Contents:
 
 1. [Why not a histogram?](#1-why-not-a-histogram)
 2. [The idea in plain words](#2-the-idea-in-plain-words)
-3. [Is it right for my data?](#3-is-it-right-for-my-data)
-4. [Install](#4-install)
-5. [Tutorial 1: spike trains (a PSTH)](#5-tutorial-1-spike-trains-a-psth)
-6. [Tutorial 2: event counts with exposure](#6-tutorial-2-event-counts-with-exposure)
-7. [Tutorial 3: success rates](#7-tutorial-3-success-rates)
-8. [Tutorial 4: a daily profile](#8-tutorial-4-a-daily-profile)
-9. [Tutorial 5: data that arrive one at a time](#9-tutorial-5-data-that-arrive-one-at-a-time)
-10. [Tutorial 6: change points in a stream without end](#10-tutorial-6-change-points-in-a-stream-without-end)
-11. [Choosing the settings](#11-choosing-the-settings)
-12. [Reading the results](#12-reading-the-results)
-13. [Size and speed](#13-size-and-speed)
-14. [Pitfalls and questions](#14-pitfalls-and-questions)
+3. [How it compares with other methods](#3-how-it-compares-with-other-methods)
+4. [Is it right for my data?](#4-is-it-right-for-my-data)
+5. [Install](#5-install)
+6. [Tutorial 1: spike trains (a PSTH)](#6-tutorial-1-spike-trains-a-psth)
+7. [Tutorial 2: event counts with exposure](#7-tutorial-2-event-counts-with-exposure)
+8. [Tutorial 3: success rates](#8-tutorial-3-success-rates)
+9. [Tutorial 4: a daily profile](#9-tutorial-4-a-daily-profile)
+10. [Tutorial 5: data that arrive one at a time](#10-tutorial-5-data-that-arrive-one-at-a-time)
+11. [Tutorial 6: change points in a stream without end](#11-tutorial-6-change-points-in-a-stream-without-end)
+12. [Choosing the settings](#12-choosing-the-settings)
+13. [Reading the results](#13-reading-the-results)
+14. [Size and speed](#14-size-and-speed)
+15. [Pitfalls and questions](#15-pitfalls-and-questions)
 
 ## 1. Why not a histogram?
 
@@ -57,6 +58,15 @@ result (bottom panel) has the sharp onset *and* the smooth plateau, an error
 band that is narrow where the data are clear and wide where they are not, and
 about half the error of the best fixed histogram.
 
+One stretch of the bottom panel looks wrong but isn't: just after the burst,
+from 130 to 160 ms, the estimate stays high while the true rate has already
+dropped, well outside the shaded band. The data are responsible. In this sample
+64 spikes fell in those 30 ms where the true rate predicts 45, a 1-in-230
+chance, and the 10-ms histogram above shows the same excess; bayesbin reports
+what the data say. The band is ±1 standard deviation, so the truth is expected
+outside it about a third of the time. Across 100 simulated datasets it lay
+inside ±1 sd at 79% of the time points and inside ±2 sd at 98%.
+
 ## 2. The idea in plain words
 
 The model behind bayesbin is simple: **the rate is constant within each bin, and
@@ -86,7 +96,66 @@ As by-products you get, for free:
   there is no change at all;
 - the probability of each possible bin.
 
-## 3. Is it right for my data?
+## 3. How it compares with other methods
+
+**What kind of learning is it?** It learns a function, the rate, along one
+axis, from counts. In form that is regression: an input (the time, the
+position) and an observed outcome (the counts in each interval). But nobody
+tells it where the steps are. The segmentation is structure it finds in the
+data by itself, as clustering finds groups; and for spike trains it is
+estimating the density of events in time. Both of those are unsupervised
+tasks. There are no labels, no training set and no test set: it is Bayesian
+model averaging over a family of step functions (in the statistics literature,
+a *product partition model*).
+
+**What functions is it good at?** Rates that jump and then stay put: onsets,
+offsets, changes of regime, plateaus, sharp and quiet stretches in the same
+record. It resolves each part at the scale the data support, fine where the
+rate changes quickly and coarse where it doesn't, which no single bin width or
+smoothing bandwidth can do. Smooth rates it approximates by averaging
+staircases; that works, but a method that assumes smoothness spends the data
+more efficiently on them. Oscillations and repeating patterns need many steps:
+fold them (Tutorial 4).
+
+**The alternatives**, and when they are the better choice:
+
+- **A histogram or a kernel smoother whose width is chosen from the data**
+  (for spike trains, Shimazaki & Shinomoto 2007 and 2010): simple and fast, but
+  one width everywhere, and no error bars or change points of their own.
+- **Splines and Gaussian processes** (for spike trains, BARS: DiMatteo,
+  Genovese & Kass 2001; log-Gaussian Cox processes): they assume the rate is
+  smooth and give error bars. Better for rates that really are smooth; slower
+  (usually by sampling), with a smoothness to choose or learn.
+- **Bayesian Blocks, PELT, hidden Markov models**: step functions too, but one
+  best segmentation with a penalty per step that you choose, or a fixed number
+  of states that recur.
+
+If I could not use bayesbin: for a quick PSTH, the Shimazaki–Shinomoto kernel;
+for a smooth rate with error bars, BARS or a Gaussian process; for change points
+alone, Bayesian Blocks, or for a live stream online change-point detection
+(Tutorial 6).
+
+**How much better, and with how little data?** On the example of section 1,
+30 simulated datasets for each number of trials, the error of each method
+against the true rate, as a multiple of bayesbin's:
+
+| trials | Shimazaki–Shinomoto histogram | Shimazaki–Shinomoto kernel | best histogram | best kernel |
+|---|---|---|---|---|
+| 2 | 1.41 | 1.43 | 1.31 | 1.21 |
+| 5 | 1.42 | 1.31 | 1.36 | 1.14 |
+| 10 | 1.44 | 1.24 | 1.45 | 1.17 |
+| 30 | 1.81 | 1.55 | 1.89 | 1.50 |
+| 100 | 2.92 | — | 3.27 | 2.57 |
+
+The "best" columns choose the bin width or bandwidth *knowing* the true rate,
+which no real method can; bayesbin beats them anyway. With few data every
+method is limited by the noise, and bayesbin's lead is smallest, but it needs
+nothing tuned and does not overfit: with little evidence for steps it uses few
+of them, and its error bars widen. With more data it pulls ahead, because it
+can be sharp at the onset and smooth on the plateau at the same time. (The
+numbers come from `tools/compare_methods.py`.)
+
+## 4. Is it right for my data?
 
 bayesbin fits when all of these hold:
 
@@ -123,7 +192,7 @@ particle counts, cases per week with population as exposure, conversion or
 failure rates along time of day or dose, change-point detection with
 uncertainty, daily or weekly profiles.
 
-## 4. Install
+## 5. Install
 
 ```sh
 pip install bayesbin              # NumPy/SciPy only
@@ -133,7 +202,7 @@ pip install "bayesbin[fast]"      # + numba kernels: ~2x faster, all cores
 The `fast` version compiles its kernels the first time it is used in a new
 environment (about a minute, once); after that they load from a cache.
 
-## 5. Tutorial 1: spike trains (a PSTH)
+## 6. Tutorial 1: spike trains (a PSTH)
 
 Thirty trials, spike times in milliseconds, recorded from 100 ms before a
 stimulus to 500 ms after. We simulate them here; with your own data, `trials`
@@ -206,7 +275,7 @@ some probability. Don't read the number of boundaries as the number of real
 changes; read the boundary probabilities, which are high only where a change is
 well supported.
 
-## 6. Tutorial 2: event counts with exposure
+## 7. Tutorial 2: event counts with exposure
 
 A counter records events every day, but it runs for a different number of
 hours each day. The rate we want is events per hour; the hours are the
@@ -242,7 +311,7 @@ from 0): here the change comes between day 69 and day 70, and it is certain. The
 a second, weaker boundary elsewhere, but its location is so spread out that no
 single day gets more than a few per cent.
 
-## 7. Tutorial 3: success rates
+## 8. Tutorial 3: success rates
 
 The same Bernoulli model works for any "successes out of trials" data: here,
 visitors and buyers per hour of the day.
@@ -266,7 +335,7 @@ use the flat prior `sigma=1, gamma=1`. The prior is worth `sigma + gamma`
 imaginary trials per bin, so with hundreds of real trials it barely matters;
 with few trials it does.
 
-## 8. Tutorial 4: a daily profile
+## 9. Tutorial 4: a daily profile
 
 To learn the shape of a typical day — traffic, calls, arrivals by time of day
 — don't feed bayesbin weeks of data as one long series: the same shape would
@@ -294,7 +363,7 @@ The rate is per slot per day. This treats the days as independent repeats of
 one profile. If some days are unusual (holidays) or the level drifts over the
 weeks, fit the shape on a recent window and model the level separately.
 
-## 9. Tutorial 5: data that arrive one at a time
+## 10. Tutorial 5: data that arrive one at a time
 
 For a live stream — a sensor, a log, a feed — `OnlineBinning` keeps the
 calculation up to date as each new interval arrives, without starting again.
@@ -340,7 +409,7 @@ Each update costs time in proportion to the length of the stream so far (and
 to `max_boundaries`): about 1–2 ms per interval after a couple of thousand. For
 streams without end, use the next tutorial's model.
 
-## 10. Tutorial 6: change points in a stream without end
+## 11. Tutorial 6: change points in a stream without end
 
 `OnlineBinning` keeps the batch model, whose prior (any number of boundaries up
 to `max_boundaries`, equally likely) suits a record of fixed length: an endless
@@ -402,7 +471,7 @@ stream keeps 313 instead of 30,000, 17 times faster, while the rates, error
 bars and surprise values move by less than 10⁻⁴ (in the tests). `merge_bins=None`
 keeps every run exactly.
 
-## 11. Choosing the settings
+## 12. Choosing the settings
 
 There are few, and the defaults are sensible.
 
@@ -429,7 +498,7 @@ There are few, and the defaults are sensible.
 - **`exact=True`**: do everything in the slow, plain way (the reference the
   tests use). You will not need it.
 
-## 12. Reading the results
+## 13. Reading the results
 
 `fit` returns a `BinningResult`:
 
@@ -458,7 +527,7 @@ The streaming classes answer from their current state:
 | the evidence | `log_evidence`, `m_posterior`, `log_marginal` | `log_marginal` |
 | the past | `fit()`: the batch fit of the data so far | — |
 
-## 13. Size and speed
+## 14. Size and speed
 
 The cost grows with the square of the number of intervals T and in proportion
 to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
@@ -482,14 +551,14 @@ to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
 - Long series of a repeating pattern: fold them (Tutorial 4). It is faster and
   it is the better model.
 
-## 14. Pitfalls and questions
+## 15. Pitfalls and questions
 
 **"more than one spike in an interval: use a finer discretization".**
 `spike_counts` assumes at most one spike per trial per interval (the paper's
 setting). Use finer intervals, or count spikes per interval yourself and use
 `PoissonModel` on the totals.
 
-**My counts are bursty.** See overdispersion in [section 3](#3-is-it-right-for-my-data):
+**My counts are bursty.** See overdispersion in [section 4](#4-is-it-right-for-my-data):
 clumps look like changes of rate. Coarser intervals, or de-duplicating the
 events, help; the error bars will otherwise be too narrow and the boundaries
 too many.

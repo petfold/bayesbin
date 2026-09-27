@@ -5,6 +5,7 @@
 ## Use it for / not for
 
 - For: spike trains over repeated trials (PSTH); event counts per window, optionally with exposure (observation time, population); successes out of trials per interval; change-point detection with uncertainty; daily/weekly profiles (fold: days as repeats); live streams (OnlineBinning, ChangePointStream: rate now, recent changes, calibrated surprise).
+- Compared with: data-chosen histograms/kernels (Shimazaki & Shinomoto) 1.2-2.9x its error on a step-like PSTH, 2-100 trials, and even width-oracle ones 1.1-3.3x (tools/compare_methods.py); for truly smooth rates prefer splines/GPs (BARS); for a single best segmentation, Bayesian Blocks/PELT.
 - Not for: unordered categories; 2-D data; heavily overdispersed (bursty, clumped) counts, which it reads as many rate changes; trials that differ systematically from each other (it estimates their average profile).
 - Assumes: rate constant within a bin; events independent given the rate (Poisson counts; independent Bernoulli trials sharing one profile); a priori every number of boundaries 0..max equally likely, every boundary placement equally likely, bin rates independent (no smoothness prior).
 

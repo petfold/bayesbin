@@ -100,7 +100,11 @@ into up to M + 1 bins, and every M, is summed exactly. Compared with
 Bayesian Blocks (Scargle et al. 2013, ApJ 764:167; `astropy.stats.bayesian_blocks`),
 which finds the single best segmentation under a penalty per block, this
 averages over all segmentations, so the rate is smooth where the data do not
-decide where a step is, and comes with error bars.
+decide where a step is, and comes with error bars. The User Guide's
+[comparison](https://github.com/petfold/bayesbin/blob/main/docs/USER_GUIDE.md#3-how-it-compares-with-other-methods)
+places it among other methods (data-chosen histograms and kernels, splines and
+Gaussian processes, change-point methods) and measures it against them: 1.2–3×
+lower error than histograms and kernels with the best width, from 2 to 100 trials.
 
 The axis is 1-D; see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md) for how far this extends
 to two dimensions.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- User Guide: "How it compares with other methods" (what kind of learning it
+  is, the functions it suits, the alternatives, measured against data-chosen
+  and oracle histograms and kernels: `tools/compare_methods.py`); section 1's
+  figure explained (a chance excess of spikes, and what a ±1 sd band means).
 - `ChangePointStream`: its state is bounded. Run lengths up to `exact_recent`
   (128) are kept exactly; older ones are merged within buckets of log length
   (`merge_bins`, 32 per octave) into moment-matched components, so the state
