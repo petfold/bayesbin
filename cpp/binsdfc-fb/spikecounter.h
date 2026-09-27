@@ -1,4 +1,4 @@
-// Modified 2026-09-26 by Peter Foldiak: mDataVersion (see README.fb.md).
+// Modified 2026-09-26 by Peter Foldiak: mDataVersion (see README.fb.md).; 2026-09-27: iecConst (the prior normaliser iecOf leaves out)
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *
