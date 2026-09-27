@@ -211,7 +211,8 @@ the PyPI package. Timings against bayesbin are in the tables below.
   for a fixed M (`-p`).
 - Streams: `ChangePointStream` keeps the run lengths up to `exact_recent`
   exactly and merges older ones into logarithmic buckets (moment matching),
-  which bounds its state at a cost of ~10⁻⁵ in its answers; `merge_bins=None`
+  which bounds its state at a cost of at most 3·10⁻⁴ (relative, in the sd;
+  10⁻⁵ in the rate, typically less) in its answers; `merge_bins=None`
   keeps every run. `OnlineBinning`'s cost per interval grows with the data so far.
 - Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): a hazard learnt from
   the data, cyclic profiles (a bin may wrap round the end of a day or week), 2-D

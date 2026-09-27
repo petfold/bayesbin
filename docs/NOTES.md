@@ -2,7 +2,7 @@
 
 ## Plan
 
-1. **Released on PyPI** as `bayesbin`: 0.1.0 and 0.2.0 (2026-09-27; see CHANGELOG.md), trusted publishing from
+1. **Released on PyPI** as `bayesbin`: 0.1.0, 0.2.0 and 0.3.0 (2026-09-27; see CHANGELOG.md), trusted publishing from
    `.github/workflows/publish.yml` (environment `pypi`, deployable from `v*` tags
    only). Next release: bump the version in `pyproject.toml`, then `git tag vX.Y.Z
    && git push origin vX.Y.Z`; a version can never be re-uploaded, only yanked.

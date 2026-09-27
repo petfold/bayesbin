@@ -1,19 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-09-27)
 
+- `ChangePointStream`: its state is bounded. Run lengths up to `exact_recent`
+  (128) are kept exactly; older ones are merged within buckets of log length
+  (`merge_bins`, 32 per octave) into moment-matched components, so the state
+  grows with the log of the current segment's length. 30,000 quiet intervals:
+  313 components instead of 30,000, 17x faster. Against every run kept: at
+  most 3e-4 relative in the sd and 1e-5 in the rate and the PIT (counts of ~500
+  with frequent changes), typically 1e-5 or less.
+  `merge_bins=None` keeps every run. `run_length_ranges()` gives the state as
+  kept; `run_length_posterior()` spreads a merged component over its lengths.
+  Merging is on by default, so results differ slightly from 0.2.0's;
+  `merge_bins=None` gives 0.2.0's exactly.
 - User Guide: "How it compares with other methods" (what kind of learning it
   is, the functions it suits, the alternatives, measured against data-chosen
   and oracle histograms and kernels: `tools/compare_methods.py`); section 1's
   figure explained (a chance excess of spikes, and what a ±1 sd band means);
   spike trains and PSTHs introduced for readers outside neuroscience.
-- `ChangePointStream`: its state is bounded. Run lengths up to `exact_recent`
-  (128) are kept exactly; older ones are merged within buckets of log length
-  (`merge_bins`, 32 per octave) into moment-matched components, so the state
-  grows with the log of the current segment's length. 30,000 quiet intervals:
-  313 components instead of 30,000, 17x faster; answers within ~1e-5.
-  `merge_bins=None` keeps every run. `run_length_ranges()` gives the state as
-  kept; `run_length_posterior()` spreads a merged component over its lengths.
 
 ## 0.2.0 (2026-09-27)
 

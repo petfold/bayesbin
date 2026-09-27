@@ -3,7 +3,7 @@ message: "If you use this software, please cite the paper below."
 title: bayesbin
 abstract: Exact Bayesian binning of rates in NumPy/SciPy.
 type: software
-version: 0.2.0
+version: 0.3.0
 date-released: 2026-09-27
 license: BSD-3-Clause
 repository-code: https://github.com/petfold/bayesbin

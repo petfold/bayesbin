@@ -484,7 +484,9 @@ kept exactly and older ones are merged, 32 buckets per doubling of length
 variance. The state then grows with the *logarithm* of the segment's length:
 here at most 245 components instead of 4006, and a 30,000-interval quiet
 stream keeps 313 instead of 30,000, 17 times faster, while the rates, error
-bars and surprise values move by less than 10⁻⁴ (in the tests). `merge_bins=None`
+bars and surprise values move very little: by at most 3·10⁻⁴ (relative, in
+the error bars of a stream of large counts with frequent changes), typically
+about 10⁻⁵. `merge_bins=None`
 keeps every run exactly.
 
 ## 12. Choosing the settings

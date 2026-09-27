@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bayesbin"
-version = "0.2.0"
+version = "0.3.0"
 description = "Exact Bayesian binning of rates (Endres, Oram, Schindelin & Földiák 2008) in NumPy/SciPy"
 readme = "README.md"
 license = "BSD-3-Clause"
