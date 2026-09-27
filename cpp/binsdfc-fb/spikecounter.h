@@ -115,6 +115,8 @@ public:
     /** spikes and gaps in the bin a..b (inclusive), lean mode */
     static inline pair<int,int> countsOf(int a,int b) { return pair<int,int>(mCum1[b+1]-mCum1[a],mCum0[b+1]-mCum0[a]); }
     /** log evidence contribution of the bin a..b, prior normalisation excluded (as mIntervalEvidences), lean mode */
+    /** the prior's normaliser, -log B(prior1, prior0), which iecOf leaves out (once per bin) */
+    static inline double iecConst() { return mLgC[0]-mLgA[0]-mLgB[0]; }
     static inline double iecOf(int a,int b) {
 	const int s=mCum1[b+1]-mCum1[a],g=mCum0[b+1]-mCum0[a];
 	return mLgA[s]+mLgB[g]-mLgC[s+g];

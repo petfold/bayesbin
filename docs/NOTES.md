@@ -94,6 +94,12 @@
   guarantee is for the penalised best segmentation, not for exact sums over
   segmentations with a given number of bins. Computing gammaln by Stirling's
   series instead of the table lookups was slower (18 ns against 9 ns a term).
+- Ported to binsdfc-fb (the reference, the fallback, the coverage): strong
+  spike data 0.80 s → 0.14 s on 4 threads. A trap in the port: its bin
+  evidences leave out the prior's normaliser (a constant per bin), harmless in
+  the gains, where it cancels, but summed over single intervals it put a linear
+  trend of 3.5 nats per index into the reference and made the benchmark 11×
+  slower until the reference counted it once per index.
 - The sd, √(E[f²] − E[f]²), cancels where a rate is large and tightly known:
   at rate 400 ± 1.6 an error in the moments grows 6·10⁴ times. The error that
   mattered was one factor common to both moments: the computed coverage (the

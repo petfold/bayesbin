@@ -61,33 +61,43 @@ inline double logSumExp(const double *x, int n)
 fwd[m][k] = log evidence of time indexes 0..k as m+1 bins, the last one ending at k,
 for bin evidence contributions iec(a,b) (bin a..b inclusive).
 
-Relative to the one-bin evidence b[k] = iec(0,k), one step is
-    phi_m[k] = log sum_{r<k} exp(phi_{m-1}[r] + G[r][k]),   G[r][k] = iec(r+1,k) - b[k] + b[r],
-and exp(G[r][k] - max_r G[r][k]) is computed once. Each step scales exp(phi) by its maximum
-and multiplies: T^2/2 multiply-adds, no exp or log in the inner loop. A term lost to
-underflow or to the exp cut-off (exp(-700)) is below LOST, so a column whose sum is not far above
-2*T*LOST could be off by more than tol (relative); such columns are recomputed exactly with
-log-sum-exp.
+Relative to a reference s[k], phi_m[k] = fwd[m][k] - s[k], one step is
+    phi_m[k] = log sum_{r<k} exp(phi_{m-1}[r] + G[r][k]),   G[r][k] = iec(r+1,k) - s[k] + s[r],
+with phi_0[k] = iec(0,k) - s[k], and exp(G[r][k] - max_r G[r][k]) is computed once. Each step
+scales exp(phi) by its maximum and multiplies: T^2/2 multiply-adds, no exp or log in the inner
+loop. A term lost to underflow or to the exp cut-off (exp(-700)) is below LOST, so a column whose
+sum is not far above 2*T*LOST could be off by more than tol (relative); such columns are
+recomputed exactly (exactColumn), in parallel when there are enough of them.
+
+Any s gives the same fwd; it matters for the scaling, which loses precision where the rows'
+maxima of phi and of G differ. s is the evidence of 0..k with every index its own bin,
+s[k] = sum_{t<=k} (iec(t,t) + binConst), binConst being any per-bin constant iec leaves out (the
+prior's normaliser): phi and G are then relative to the finest segmentation, both nearly
+level along the rows. (Relative to the one-bin evidence iec(0,k), as before, phi grows steeply
+with r on data with strong steps while G peaks at the steps, and most columns fell back.)
 */
 template<class IEC>
 void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double> > &fwd,
-		 double tol = 1e-13)
+		 double binConst = 0.0, double tol = 1e-13)
 {
 	using std::vector;
 	fwd.assign(mmax + 1, vector<double>(K, NEG));
-	vector<double> b(K);
+	vector<double> b(K), s(K);
 	for (int k = 0; k < K; k++) b[k] = iec(0, k);
 	fwd[0] = b;
 	if (mmax == 0 || K == 1) return;
+	// the reference; binConst is a per-bin constant iec leaves out (the prior's normaliser): without
+	// it here s would carry a linear trend of it along the rows and misalign the scaling again
+	for (int k = 0; k < K; k++) s[k] = (k > 0 ? s[k - 1] : 0.0) + iec(k, k) + binConst;
 
 	// The steps are blocked over columns: block [k0,k1) at step m needs phi_{m-1}[r] for r < k1 only,
 	// which is final (earlier blocks: all m; this block: m-1). So each block's slice of
 	// E(r,k) = exp(G[r][k] - c[k]) is built just before its m-loop and discarded after it: memory
 	// O(K * CB), not O(K^2), and for moderate K the slice stays in cache for all m. The scale p is the maximum of phi_{m-1} over r < k1 (per block and m: consistent
-	// within each column's sum). phi_m = fwd[m] - b is kept in fwd until the end.
+	// within each column's sum). phi_m = fwd[m] - s is kept in fwd until the end.
 	const int CBMAX = 64, CB = CBMAX;  // (narrower blocks, to fit a slice in cache, measured slower)
 	std::unique_ptr<double[]> Eb(new double[(size_t)K * CB]);
-	for (int k = 0; k < K; k++) fwd[0][k] = 0.0;  // phi_0 = 0
+	for (int k = 0; k < K; k++) fwd[0][k] = b[k] - s[k];  // phi_0
 	// row groups of RG rows (a multiple of CB): once a group's phi_m is complete it gets a fixed scale
 	// Sg[m][g] and V[m][r] = exp(phi_m[r] - Sg[m][g]), exponentiated once; a block then combines groups
 	// with one factor exp(Sg - p) each (a multiply per row, not an exp)
@@ -96,6 +106,23 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 	const double floor = 2.0 * K * LOST / tol;  // a lost term (underflow, exp cut-off) is < LOST
 	vector<double> v((size_t)ng * RG), c(CB);
 	double sums[CBMAX];
+	int redo[CBMAX];
+	// phi_m[k] exactly, in one pass: a running maximum, the sum rescaled when it rises; terms more
+	// than SKIP nats below it (< e^-60 of the result each) not exponentiated, and, as a row's term
+	// is at most prev[r] + cu (cu: the column's largest gain), rows already that far below skipped
+	// before their bin evidence is computed
+	const double SKIP = 60.0;
+	auto exactColumn = [&](const double *prev, int k, double cu) {
+		double mx = NEG, acc = 0.0;
+		for (int r = k - 1; r >= 0; r--) {  // from the last row: the largest terms tend to be late
+			const double pr = prev[r];
+			if (pr == NEG || pr + cu < mx - SKIP) continue;
+			const double t = pr + iec(r + 1, k) - s[k] + s[r];
+			if (t > mx) { acc = mx == NEG ? 1.0 : acc * exp(mx - t) + 1.0; mx = t; }
+			else if (t > mx - SKIP) acc += exp(t - mx);
+		}
+		return mx == NEG ? NEG : mx + log(acc);
+	};
 	for (int k0 = 0; k0 < K; k0 += CB) {
 		const int k1 = std::min(K, k0 + CB), w = k1 - k0, nr = k1 - 1;  // rows r < k1 - 1 reach it
 		// this block's slice: G and its column maxima, then E = exp(G - c) (vectorised, vmath.cpp)
@@ -110,7 +137,7 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 				for (int u = 0; u < CB; u++) {
 					const int k = k0 + u;
 					if (u >= w || k <= r) { row[u] = NEG; continue; }
-					const double g = iec(r + 1, k) - b[k] + b[r];
+					const double g = iec(r + 1, k) - s[k] + s[r];
 					row[u] = g;
 					cl[u] = fmax(cl[u], g);
 				}
@@ -126,7 +153,8 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 				vexpInPlace(row, CB);  // -1000 -> exactly 0
 			}
 		}
-		for (int u = 0; u < CB; u++) if (c[u] == NEG) c[u] = 0.0;
+		double creal[CBMAX];  // the column maxima before the zero fill, for exactColumn's bound
+		for (int u = 0; u < CB; u++) { creal[u] = c[u]; if (c[u] == NEG) c[u] = 0.0; }
 
 		for (int m = 1; m <= mmax; m++) {
 			const double *prev = fwd[m - 1].data();  // phi_{m-1}
@@ -163,13 +191,20 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 				#pragma omp critical
 				for (int u = 0; u < CB; u++) sums[u] += loc[u];
 			}
+			int nredo = 0;
+			long work = 0;
 			for (int k = k0; k < k1; k++) {
 				if (k < m) { fwd[m][k] = NEG; continue; }  // needs m boundaries before k
 				const double sk = sums[k - k0];
 				if (sk >= floor) { fwd[m][k] = log(sk) + p + c[k - k0]; continue; }
-				std::vector<double> buf(k);  // exact column
-				for (int r = 0; r < k; r++) buf[r] = prev[r] + iec(r + 1, k) - b[k] + b[r];
-				fwd[m][k] = logSumExp(buf.data(), k);
+				redo[nredo++] = k;  // underflow could matter: the exact sum
+				work += k;
+			}
+			// the exact columns of a step are independent: in parallel when there is enough work
+			#pragma omp parallel for schedule(dynamic) if (work >= 20000)
+			for (int i = 0; i < nredo; i++) {
+				const int k = redo[i];
+				fwd[m][k] = exactColumn(prev, k, creal[k - k0]);
 			}
 			// a row group completed at step m: fix its scale and exponentiate it once
 			if (k1 % RG == 0 || k1 == K) {
@@ -182,15 +217,20 @@ void fastForward(int K, int mmax, const IEC &iec, std::vector<std::vector<double
 				vexpInPlace(Vg, g1 - g0);
 			}
 		}
-		// step 0 (phi_0 = 0) needs its groups too, for step 1 of later blocks
+		// step 0 needs its groups too, for step 1 of later blocks
 		if (k1 % RG == 0 || k1 == K) {
 			const int g = (k1 - 1) / RG, g0 = g * RG, g1 = std::min(K, g0 + RG);
-			Sg[0][g] = 0.0;
-			for (int r = g0; r < g1; r++) V[0][r] = 1.0;
+			double sg = NEG;
+			for (int r = g0; r < g1; r++) sg = fmax(sg, fwd[0][r]);
+			Sg[0][g] = sg;
+			double *Vg = V[0].data() + g0;
+			for (int r = g0; r < g1; r++) Vg[r - g0] = (sg == NEG || fwd[0][r] == NEG) ? -1000.0 : fmax(fwd[0][r] - sg, -1000.0);
+			vexpInPlace(Vg, g1 - g0);
 		}
 	}
-	for (int m = 0; m <= mmax; m++)
-		for (int k = 0; k < K; k++) fwd[m][k] += b[k];
+	fwd[0] = b;
+	for (int m = 1; m <= mmax; m++)
+		for (int k = 0; k < K; k++) fwd[m][k] += s[k];
 }
 
 /** the last central iteration of the plain evidences, for reuse by forwardBackward:

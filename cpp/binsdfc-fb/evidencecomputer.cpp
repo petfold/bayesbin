@@ -183,7 +183,7 @@ void evidenceComputer<evifunc>::computeEvidences()
 	mEvidences.resize(mMMax+1);
 	if(fb::enabled && mPUB==1.0 && K>0) {
 		vector<vector<double> > fwd;
-		fb::fastForward(K,mMMax,[](int a,int b){return iecOf(a,b);},fwd);
+		fb::fastForward(K,mMMax,[](int a,int b){return iecOf(a,b);},fwd,iecConst());
 		for(int m=0;m<=mMMax;m++) mEvidences[m]=fwd[m][K-1]+mPriors[m];
 		mSubEvidences=fwd[mMMax];
 		fb::cache.version=mDataVersion;

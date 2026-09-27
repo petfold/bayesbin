@@ -77,6 +77,24 @@ unmodified original in `../../reference/binsdfc-0.1/`).
   denormals-are-zero per thread (`fb::FlushDenormals`): subnormal products are
   below that bound, and slow on x86.
 - `CMakeLists.txt`: the new source files; `-ffast-math` off globally (see Build).
+- Later (2026-09-27), from bayesbin:
+  - The central iteration's reference is the evidence with every time index
+    its own bin, not the one-bin evidence (`fb::fastForward`; the prior's
+    normaliser, which `iecOf` leaves out, counted once per index). Relative to
+    one bin the scaled sums of most columns fell below the underflow bound on
+    data with strong steps and were recomputed exactly.
+  - The exact recomputation is one pass per column (terms more than 60 nats
+    below the running maximum not exponentiated, and rows whose bound is
+    already that far below skipped before their bin evidence is computed), and
+    a step's exact columns run on the OpenMP threads when there are enough.
+  - The SDF and its second moment are divided by the computed coverage (the
+    posterior of the bins covering each index, 1 in exact arithmetic): its
+    rounding error is common to both and would otherwise reach the standard
+    deviation amplified by sdf²/var.
+  - 400 trials, firing probability stepping 0.02 → 0.4 → 0.1 → 0.3, T = 1200,
+    M ≤ 30: 0.82 s → 0.30 s on one thread, 0.80 s → 0.14 s on four. The
+    printed output is unchanged, on those data and on the test and benchmark
+    data (-M and -v), and the speed elsewhere within noise.
 
 With the upper bound on the firing probability (the incomplete-Beta prior) the
 original paths are used, as before.

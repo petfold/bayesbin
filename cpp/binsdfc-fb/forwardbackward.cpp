@@ -24,7 +24,7 @@ void forwardBackward::forward(int mmax, vector<vector<double> > &fwd)
 {
 	precomputeSubIntervals();
 	const int K = mIntervEnd - mIntervStart;
-	fb::fastForward(K, min(mmax, K - 1), [](int a, int b) { return iecOf(a, b); }, fwd);
+	fb::fastForward(K, min(mmax, K - 1), [](int a, int b) { return iecOf(a, b); }, fwd, iecConst());
 }
 
 void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2,
@@ -46,13 +46,13 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	// (the plain evidences already ran it for these data: reuse, by reference)
 	vector<vector<double> > own;
 	const bool cached = fb::cache.version == mDataVersion && fb::cache.K == K && fb::cache.mmax >= m2;
-	if (!cached) fb::fastForward(K, m2, IEC, own);
+	if (!cached) fb::fastForward(K, m2, IEC, own, iecConst());
 	const vector<vector<double> > &fwd = cached ? fb::cache.fwd : own;
 
 	// backward, as the forward iteration on the reversed time axis:
 	// bwd[j][k] = log evidence of k+1..K-1 as j+1 bins = rev[j][K-2-k] (read in place)
 	vector<vector<double> > rev;
-	fb::fastForward(K, m2, [&](int a, int b) { return IEC(K - 1 - b, K - 1 - a); }, rev);
+	fb::fastForward(K, m2, [&](int a, int b) { return IEC(K - 1 - b, K - 1 - a); }, rev, iecConst());
 
 	// weights of the models: c[M] = log(P(M|D) / sum_{m1..m2} P) - log E_unnormalised[M]
 	vector<double> ev(logEvidences.begin() + m1, logEvidences.begin() + m2 + 1);
@@ -110,7 +110,11 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 	// exceed 1e-14, the entry is redone exactly (a separate scalar pass over the flagged b).
 	const double logRisk = log(NI * fb::LOST) - log(1e-14);
 	const int nthreads = omp_get_max_threads();
-	vector<vector<double> > d1(nthreads, vector<double>(K + 1, 0.0)), d2(nthreads, vector<double>(K + 1, 0.0));
+	// difference arrays per thread: d0 the coverage (the posterior of the bins covering each index,
+	// 1 in exact arithmetic), d1 and d2 the moments, which are divided by it at the end: its rounding
+	// error is a factor common to both, and sdf2 - sdf^2 would amplify it by sdf^2/var
+	vector<vector<double> > d0(nthreads, vector<double>(K + 1, 0.0)), d1(nthreads, vector<double>(K + 1, 0.0)),
+		d2(nthreads, vector<double>(K + 1, 0.0));
 	// tiled: bin starts a in groups of AB, ends b in chunks of BC, so that a chunk of Bt (NI x BC)
 	// stays in cache for all AB rows of a group instead of NI rows of length K-a streaming per row
 	const int AB = 64, BC = 512;
@@ -120,9 +124,9 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 		fb::FlushDenormals ftz;
 		const int tid = omp_get_thread_num();
 		vector<double> W(BC), sh(BC), iec(BC), m1v(BC), m2v(BC), q1(BC), q2(BC), buf(NI);
-		vector<double> Aall((size_t)AB * NI), Lall((size_t)AB * NI), mall(AB), row1(AB), row2(AB);
+		vector<double> Aall((size_t)AB * NI), Lall((size_t)AB * NI), mall(AB), row0(AB), row1(AB), row2(AB);
 		vector<int> risky;
-		double *D1 = d1[tid].data(), *D2 = d2[tid].data();
+		double *D0 = d0[tid].data(), *D1 = d1[tid].data(), *D2 = d2[tid].data();
 		const int *C1 = mCum1.data(), *C0 = mCum0.data();
 		#pragma omp for schedule(dynamic)
 		for (int ga = 0; ga < nga; ga++) {
@@ -135,7 +139,7 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 				if (ma == NEG) ma = 0.0;
 				mall[a - a0] = ma;
 				for (int i = 0; i < NI; i++) Aa[i] = exp(La[i] - ma);
-				row1[a - a0] = row2[a - a0] = 0.0;
+				row0[a - a0] = row1[a - a0] = row2[a - a0] = 0.0;
 			}
 			for (int b0 = a0; b0 < K; b0 += BC) {
 				const int b1 = min(K, b0 + BC);
@@ -181,28 +185,34 @@ void forwardBackward::compute(const vector<double> &logEvidences, int m1, int m2
 						const double lw = logSumExp(buf.data(), NI);
 						w[u] = lw == NEG ? 0.0 : exp(lw + ie[u]);
 					}
-					double s1r = 0.0, s2r = 0.0;
-					#pragma omp simd reduction(+:s1r,s2r)
+					double s0r = 0.0, s1r = 0.0, s2r = 0.0;
+					#pragma omp simd reduction(+:s0r,s1r,s2r)
 					for (int u = 0; u < len; u++) {
 						r1[u] = w[u] * e1[u];
 						r2[u] = w[u] * e2[u];
+						s0r += w[u];
 						s1r += r1[u];
 						s2r += r2[u];
 					}
+					row0[a - a0] += s0r;
 					row1[a - a0] += s1r;
 					row2[a - a0] += s2r;
 					// range-add over a..b: -q at b+1 (the +q at a is the row sum, added below)
 					#pragma omp simd
-					for (int u = 0; u < len; u++) { D1[bs + u + 1] -= r1[u]; D2[bs + u + 1] -= r2[u]; }
+					for (int u = 0; u < len; u++) {
+						D0[bs + u + 1] -= w[u];
+						D1[bs + u + 1] -= r1[u];
+						D2[bs + u + 1] -= r2[u];
+					}
 				}
 			}
-			for (int a = a0; a < a1; a++) { D1[a] += row1[a - a0]; D2[a] += row2[a - a0]; }
+			for (int a = a0; a < a1; a++) { D0[a] += row0[a - a0]; D1[a] += row1[a - a0]; D2[a] += row2[a - a0]; }
 		}
 	}
-	double acc1 = 0.0, acc2 = 0.0;
+	double acc0 = 0.0, acc1 = 0.0, acc2 = 0.0;
 	for (int t = 0; t < K; t++) {
-		for (int th = 0; th < nthreads; th++) { acc1 += d1[th][t]; acc2 += d2[th][t]; }
-		sdf[t] = acc1;
-		sdf2[t] = acc2;
+		for (int th = 0; th < nthreads; th++) { acc0 += d0[th][t]; acc1 += d1[th][t]; acc2 += d2[th][t]; }
+		sdf[t] = acc1 / acc0;
+		sdf2[t] = acc2 / acc0;
 	}
 }
