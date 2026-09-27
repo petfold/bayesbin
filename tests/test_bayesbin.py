@@ -412,6 +412,51 @@ def test_fused_results_do_not_depend_on_the_number_of_threads():
         np.testing.assert_array_equal(a.boundary_posterior, b.boundary_posterior)
 
 
+def _very_strong_steps():
+    rng = np.random.default_rng(5)
+    return PoissonModel.weak_prior(rng.poisson(np.repeat([20.0, 200.0, 50.0, 400.0], 150)).astype(float))
+
+
+@pytest.mark.parametrize("fused", [True, False])
+def test_very_strong_steps_equal_the_exact_path(fused, monkeypatch):
+    """Evidences spanning tens of thousands of nats: most columns of the forward pass
+    need the exact fallback, whose shortcuts (one pass, terms far below the maximum
+    dropped) must not show."""
+    import bayesbin.core as core
+
+    if fused and core._FAST is None:
+        pytest.skip("fused kernels switched off or not installed")
+    if not fused:
+        monkeypatch.setattr(core, "_FAST", None)
+    model = _very_strong_steps()
+    got, ref = fit(model, 12), fit(model, 12, exact=True)
+    np.testing.assert_allclose(got.log_evidence, ref.log_evidence, rtol=1e-13)
+    np.testing.assert_allclose(got.rate, ref.rate, rtol=1e-9)
+    np.testing.assert_allclose(got.boundary_posterior, ref.boundary_posterior, atol=1e-9)
+
+
+def test_strong_steps_keep_most_columns_on_the_fast_path(monkeypatch):
+    """The forward pass's reference (every interval its own bin) keeps the scaled sums of
+    most columns clear of the underflow fallback on data with strong steps (relative to
+    the one-bin evidence, 64% of these columns fell back)."""
+    import bayesbin.core as core
+
+    if core._FAST is None:
+        pytest.skip("fused kernels switched off or not installed")
+    counted = [0]
+    steps = core._FAST.block_steps
+
+    def counting(*args):
+        n = steps(*args)
+        counted[0] += n
+        return n
+
+    monkeypatch.setattr(core._FAST, "block_steps", counting)
+    model = PoissonModel.weak_prior(np.random.default_rng(0).poisson(np.repeat([2.0, 9.0, 4.0], 400)).astype(float))
+    fit(model, 20)
+    assert counted[0] < 0.35 * 2 * 20 * model.T
+
+
 def test_non_integer_data_take_the_numpy_path():
     rng = np.random.default_rng(22)
     model = PoissonModel.weak_prior(rng.uniform(0, 5, 200))

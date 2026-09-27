@@ -330,9 +330,16 @@ def _forward_exact(L: np.ndarray, max_m: int) -> np.ndarray:
 def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _blk=None) -> np.ndarray:
     """fwd[m, k] as in _forward_exact, in blocks of columns.
 
-    Relative to the one-bin evidence b[k] = L[0, k], a step is
+    Relative to a reference s[k], φ_m[k] = fwd[m, k] - s[k], a step is
         φ_m[k] = log Σ_{r<k} exp(φ_{m-1}[r] + G[r, k]),
-        G[r, k] = L[r+1, k] - b[k] + b[r]   (the gain of a boundary at r).
+        G[r, k] = L[r+1, k] - s[k] + s[r],   φ_0 = L[0, k] - s[k].
+    Any s gives the same fwd; it matters for the scaling below, which takes each
+    factor's maximum over the rows and loses precision where the two maxima sit on
+    different rows. s is the evidence of 0..k with every interval its own bin
+    (s[k] = Σ_{t<=k} L[t, t]): φ and G are then evidences relative to the finest
+    segmentation, both roughly level along the rows. (Relative to the one-bin
+    evidence instead, φ grows steeply with r on data with strong steps, G peaks at
+    the steps, and most columns needed the exact fallback.)
     Columns go in blocks [k0, k1): a block needs φ_{m-1}[r] only for r < k1,
     which is final by then (earlier blocks: every m; this block: m - 1). So each
     block's slice of exp(G - column max) is made once, from the rows that reach
@@ -360,17 +367,20 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
     fwd[0] = b
     if max_m == 0 or T == 1:
         return fwd
+    # the reference: every interval its own bin (see the docstring)
+    s = np.cumsum(np.concatenate([np.diagonal(blk(k0, min(T, k0 + block), k0, min(T, k0 + block)))
+                                  for k0 in range(0, T, block)]))
     phi = np.full((max_m + 1, T), _NEG_INF)
-    phi[0] = 0.0
+    phi[0] = b - s
     floor = 2 * T * _FLUSH / tol
     for k0 in range(0, T, block):
         k1 = min(T, k0 + block)
         nr = k1 - 1  # rows r = 0..k1-2 reach this block
         if nr <= 0:
             continue
-        # G[r, k] = L[r+1, k] - b[k] + b[r]; -inf where r >= k (L is -inf below its diagonal)
-        G = np.subtract(blk(1, k1, k0, k1), b[None, k0:k1])  # a new array: blk may return a view
-        G += b[:nr, None]
+        # G[r, k] = L[r+1, k] - s[k] + s[r]; -inf where r >= k (L is -inf below its diagonal)
+        G = np.subtract(blk(1, k1, k0, k1), s[None, k0:k1])  # a new array: blk may return a view
+        G += s[:nr, None]
         c = G.max(axis=0)
         reach = np.isfinite(c)  # columns with any finite gain (fixed for the block)
         c[~reach] = 0.0
@@ -417,7 +427,7 @@ def _forward(ev, max_m: int, *, tol: float = 1e-13, block: int | None = None, _b
                 prev = phi[m - 1, :nr]
                 new[bad] = logsumexp(prev[:, None] + G[:, bad], axis=0)
             phi[m, k0:k1] = new
-    fwd[1:] = b[None, :] + phi[1:]
+    fwd[1:] = s[None, :] + phi[1:]
     return fwd
 
 
@@ -431,22 +441,23 @@ def _forward_fused(params, T: int, max_m: int, reverse: bool, *, tol: float = 1e
     fwd[0] = b
     if max_m == 0 or T == 1:
         return fwd
+    s = _FAST.reference(*params, T, reverse)  # every interval its own bin, as in _forward
     phi = np.full((max_m + 1, T), _NEG_INF)
-    phi[0] = 0.0
+    phi[0] = b - s
     floor = 2 * T * _FLUSH / tol
     with _FAST.one_blas_thread():  # the kernels split the products over numba's threads
         for c0 in range(0, T, block):
             c1 = min(T, c0 + block)
             if c1 - 1 <= 0:
                 continue
-            E, c, reach = _FAST.gain_slice(*params, T, reverse, b, c0, c1, _LOG_FLUSH)
+            E, c, reach = _FAST.gain_slice(*params, T, reverse, s, c0, c1, _LOG_FLUSH)
             if c0 > 0:
                 before, q, qfin = _FAST.rows_before(phi, max_m, c0, _LOG_FLUSH, E)
             else:
                 before, q, qfin = np.zeros((max_m, c1 - c0)), np.zeros(max_m), np.zeros(max_m, bool)
-            _FAST.block_steps(*params, T, reverse, b, phi, E, before, q, qfin, c, reach, c0, c1,
+            _FAST.block_steps(*params, T, reverse, s, phi, E, before, q, qfin, c, reach, c0, c1,
                               floor, _LOG_FLUSH)
-    fwd[1:] = b[None, :] + phi[1:]
+    fwd[1:] = s[None, :] + phi[1:]
     return fwd
 
 

@@ -57,6 +57,8 @@ _NCH = 16  # row groups in the gain slice (interleaved)
 _MP = 4  # parts of the M steps in the rows before a block
 _RB = 32  # rows per part of a bin-posterior tile
 _BW = 64  # bin ends per part in the model folding
+_SKIP = 60.0  # nats below the running maximum from which an exact sum's terms are dropped
+_PAR_WORK = 20000  # terms in a step's exact columns from which they run in parallel
 
 
 @njit(inline="always", cache=True)
@@ -129,6 +131,28 @@ def base(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse):
 
 
 @njit(inline="always", cache=True)
+def _reference(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse):
+    out = np.empty(T)
+    acc = 0.0
+    for k in range(T):
+        a, bb = _at(T, reverse, k, k)
+        acc += _iec(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, a, bb)
+        out[k] = acc
+    return out
+
+
+@njit(cache=True, nogil=True)
+def reference(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse):
+    """s[k] = log evidence of 0..k with every interval its own bin (the forward pass's
+    reference: see core._forward)."""
+    if code == 0:
+        return _reference(0, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse)
+    if code == 1:
+        return _reference(1, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse)
+    return _reference(2, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse)
+
+
+@njit(inline="always", cache=True)
 def _gain_slice(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1, lo):
     nr, w = c1 - 1, c1 - c0
     E = np.empty((nr, w))
@@ -165,7 +189,7 @@ def _gain_slice(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1,
 @njit(cache=True, nogil=True, parallel=True)
 def gain_slice(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1, lo):
     """E[r, u] = exp(G[r, u] - c[u]) for rows r < c1-1, where G[r, u] = L[r+1, c0+u] - b[c0+u]
-    + b[r] (0 where r >= c0+u) and c[u] is the column maximum (0 for a column with no finite
+    + b[r] with b the reference (0 where r >= c0+u) and c[u] is the column maximum (0 for a column with no finite
     gain), flushed to 0 below exp(lo); and c, and which columns have a finite gain."""
     if code == 0:
         return _gain_slice(0, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, c0, c1, lo)
@@ -206,11 +230,33 @@ def rows_before(phi, M, c0, lo, E):
 
 
 @njit(inline="always", cache=True)
+def _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b, phi, m, k):
+    """phi[m, k] exactly: log Σ_{r<k} exp(phi[m-1, r] + G[r, k]), in one pass (a running
+    maximum, the sum rescaled when it rises; terms more than _SKIP nats below it, far
+    below the precision of the result, not exponentiated)."""
+    mx = _NEG
+    acc = 0.0
+    for r in range(k - 1, -1, -1):  # from the last row: the largest terms tend to be late
+        pr = phi[m - 1, r]
+        if pr == _NEG:
+            continue
+        a, bb = _at(T, reverse, r + 1, k)
+        t = pr + _iec(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, a, bb) - b[k] + b[r]
+        if t > mx:
+            acc = acc * math.exp(mx - t) + 1.0 if mx != _NEG else 1.0
+            mx = t
+        elif t > mx - _SKIP:  # below: < e^-60 of the final sum each, 1e-21 for 1e5 rows
+            acc += math.exp(t - mx)
+    return _NEG if mx == _NEG else mx + math.log(acc)
+
+
+@njit(inline="always", cache=True)
 def _block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
                  phi, E, before, q, qfin, cmax, reach, c0, c1, floor, lo):
     M = phi.shape[0] - 1
     nr, w = c1 - 1, c1 - c0
     sums = np.empty(w)
+    redo = np.empty(w, np.int64)  # the columns of a step that need the exact sum
     n_exact = 0
     for m in range(1, M + 1):
         p_in = _NEG
@@ -235,37 +281,33 @@ def _block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
             vr = math.exp(x)
             for u in range(w):
                 sums[u] += vr * E[r, u]
+        nredo = 0
+        work = 0
         for u in range(w):
             k = c0 + u
             if k < m:
                 phi[m, k] = _NEG
             elif sums[u] >= floor or not reach[u]:
                 phi[m, k] = (math.log(sums[u]) if sums[u] > 0.0 else _NEG) + p + cmax[u]
-            else:  # underflow could matter: exact log-sum-exp over the column
-                n_exact += 1
-                mx = _NEG
-                for r in range(k):
-                    if phi[m - 1, r] == _NEG:
-                        continue
-                    a, bb = _at(T, reverse, r + 1, k)
-                    t = phi[m - 1, r] + _iec(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, a, bb) - b[k] + b[r]
-                    if t > mx:
-                        mx = t
-                if mx == _NEG:
-                    phi[m, k] = _NEG
-                else:
-                    s = 0.0
-                    for r in range(k):
-                        if phi[m - 1, r] == _NEG:
-                            continue
-                        a, bb = _at(T, reverse, r + 1, k)
-                        s += math.exp(phi[m - 1, r] + _iec(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, a, bb)
-                                      - b[k] + b[r] - mx)
-                    phi[m, k] = mx + math.log(s)
+            else:  # underflow could matter: the exact sum over the column
+                redo[nredo] = k
+                nredo += 1
+                work += k
+        n_exact += nredo
+        if work >= _PAR_WORK:  # enough to be worth starting the threads
+            for i in prange(nredo):
+                k = redo[i]
+                phi[m, k] = _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
+                                          phi, m, k)
+        else:
+            for i in range(nredo):
+                k = redo[i]
+                phi[m, k] = _exact_column(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
+                                          phi, m, k)
     return n_exact
 
 
-@njit(cache=True, nogil=True)
+@njit(cache=True, nogil=True, parallel=True)
 def block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
                 phi, E, before, q, qfin, cmax, reach, c0, c1, floor, lo):
     """The steps m = 1..M for the columns c0..c1-1: the rows before the block come in as

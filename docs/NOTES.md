@@ -17,7 +17,12 @@
 3. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.
 4. **2-D** via recursive partitions (below: where the method stops being 1-D).
-5. **The last sequential step**: the steps inside each 256-column block of the
+5. **The standard deviation where the rate is large and tightly determined**:
+   it is √(E[f²] − E[f]²), which cancels: at rate 400 with sd 1.6 a 1e-10
+   relative error in the moments becomes 4e-6 in the sd (seen on the strongest
+   test data). The posterior variance as E[Var(f | bin)] + Var(E[f | bin]),
+   about a pivot near the rate, would avoid it.
+6. **The last sequential step**: the steps inside each 256-column block of the
    dynamic programme (about 15% of the time on 4 threads). A `prange` over
    columns per step cost more in launches than it saved. Running the forward
    and backward passes at once (two threads, half of numba's each) gained only
@@ -72,6 +77,17 @@
   more in OpenBLAS's per-call packing than they gain.
 - Fixed parts (not one per thread), combined in a fixed order, keep the results
   bit-identical on any number of threads; a test checks it.
+- Data with strong steps: the forward pass scales each column's sum by the
+  largest row factor times the largest gain, which fails where the two sit on
+  different rows. Relative to the one-bin evidence the row factors grow
+  steeply (one bin over a step fits badly) while the gains peak at the steps,
+  so on counts stepping 2 → 9 → 4 the scale overshot by a median 530 nats and
+  64% of columns took the exact fallback (0.86 s for T=1200, any number of
+  threads). Relative to every interval as its own bin both are nearly level:
+  28% fall back. The fallback is now one pass per column (terms more than 60
+  nats below the running maximum not exponentiated) and runs a step's columns
+  in parallel: 0.09 s on 4 threads. With stronger steps (rates 20 → 400) most
+  columns still fall back, and fast: T=4800 with 16 steps, 31 s → 3.2 s.
 
 ## Where the method stops being 1-D
 
