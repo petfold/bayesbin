@@ -43,6 +43,11 @@ r.boundary_posterior        # P(a bin ends at interval k | data)
 r = fit(PoissonModel.weak_prior(counts, exposure), max_boundaries=20)
 ```
 
+For data that arrive over time, `OnlineBinning` updates the forward programme one
+interval at a time (the rate now, the last change point and the predictive
+distribution of the next count, exactly as a batch fit of the data so far gives
+them); see the User Guide's Tutorial 5.
+
 By default predictions average over every M, as the paper recommends;
 `m_mass=0.9` restricts them to the credible range of M, which is what the
 original program does.
@@ -103,7 +108,7 @@ to two dimensions.
 
 ## Verification
 
-`pytest` (41 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
+`pytest` (48 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](https://github.com/petfold/bayesbin/tree/main/reference)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -128,6 +133,10 @@ to two dimensions.
   coverage, the posterior of the bins covering each interval, which is 1 in
   exact arithmetic; its rounding error would otherwise reach the sd amplified
   by rate²/var.)
+- `OnlineBinning` against the batch fit of the data so far, at every stage:
+  evidences, the current rate and its sd, where the current bin starts, and the
+  next-count predictive against batch marginal likelihoods of the data extended
+  by each possible count.
 - The User Guide's examples run and print what the guide says they print.
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.

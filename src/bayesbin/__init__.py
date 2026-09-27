@@ -10,10 +10,12 @@ from bayesbin.core import (
     fit,
     spike_counts,
 )
+from bayesbin.online import OnlineBinning
 
 __all__ = [
     "BernoulliModel",
     "BinningResult",
+    "OnlineBinning",
     "PoissonModel",
     "bin_posterior",
     "bin_posterior_for_m",

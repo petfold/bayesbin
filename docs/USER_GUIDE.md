@@ -19,10 +19,11 @@ Contents:
 6. [Tutorial 2: event counts with exposure](#6-tutorial-2-event-counts-with-exposure)
 7. [Tutorial 3: success rates](#7-tutorial-3-success-rates)
 8. [Tutorial 4: a daily profile](#8-tutorial-4-a-daily-profile)
-9. [Choosing the settings](#9-choosing-the-settings)
-10. [Reading the results](#10-reading-the-results)
-11. [Size and speed](#11-size-and-speed)
-12. [Pitfalls and questions](#12-pitfalls-and-questions)
+9. [Tutorial 5: data that arrive one at a time](#9-tutorial-5-data-that-arrive-one-at-a-time)
+10. [Choosing the settings](#10-choosing-the-settings)
+11. [Reading the results](#11-reading-the-results)
+12. [Size and speed](#12-size-and-speed)
+13. [Pitfalls and questions](#13-pitfalls-and-questions)
 
 ## 1. Why not a histogram?
 
@@ -292,7 +293,53 @@ The rate is per slot per day. This treats the days as independent repeats of
 one profile. If some days are unusual (holidays) or the level drifts over the
 weeks, fit the shape on a recent window and model the level separately.
 
-## 9. Choosing the settings
+## 9. Tutorial 5: data that arrive one at a time
+
+For a live stream — a sensor, a log, a feed — `OnlineBinning` keeps the
+calculation up to date as each new interval arrives, without starting again.
+It answers the questions a stream asks, exactly as a full fit of the data so
+far would: what is the rate *now*, when did it last change, and how surprising
+is the next count?
+
+```python
+from bayesbin import OnlineBinning
+
+rng = np.random.default_rng(5)
+stream = rng.poisson(np.repeat([3.0, 9.0], [150, 30]))   # the rate triples at interval 150
+ob = OnlineBinning.poisson(alpha=1.0, beta=0.25, max_boundaries=10)   # prior: about 4 per interval
+
+surprise, since_change = [], []
+for y in stream:
+    surprise.append(float(1 - ob.next_cdf(y - 1)[0]))   # before seeing y: P(a count >= y)
+    ob.update(y)
+    since_change.append(float(ob.current_bin_start()[150:].sum()) if ob.T > 150 else 0.0)
+
+rate, sd = ob.rate_now()
+print(f"{rate:.2f} ± {sd:.2f}")   # 8.41 ± 0.58: the rate now (true: 9)
+print([round(p, 3) for p in surprise[148:154]])   # [0.549, 0.942, 0.324, 0.002, 0.144, 0.629]
+print(next(k for k, p in enumerate(since_change) if p > 0.95))   # 154: sure of the change 4 intervals on
+```
+
+The count of 10 at interval 151 had a 0.2% chance of being that high, given
+everything before it; by interval 154 the model is more than 95% sure that a
+new bin started after 150. `current_bin_start()` gives the whole distribution
+of where the current bin began.
+
+The prior has to be chosen up front (`weak_prior` needs all the data). And one
+thing a stream cannot give cheaply: revised estimates of the *past*, which
+every new point changes a little. Ask for them when needed, with a full fit of
+the data so far:
+
+```python
+result = ob.fit()
+print(result.rate[[100, 170]].round(2))   # [2.9  8.42]: before and after the change
+```
+
+Each update costs time in proportion to the length of the stream so far (and
+to `max_boundaries`): about 1–2 ms per interval after a couple of thousand. For
+streams without end, see the plans in [docs/NOTES.md](NOTES.md#plan).
+
+## 10. Choosing the settings
 
 There are few, and the defaults are sensible.
 
@@ -319,7 +366,7 @@ There are few, and the defaults are sensible.
 - **`exact=True`**: do everything in the slow, plain way (the reference the
   tests use). You will not need it.
 
-## 10. Reading the results
+## 11. Reading the results
 
 `fit` returns a `BinningResult`:
 
@@ -338,7 +385,7 @@ The units of `rate`: for `BernoulliModel`, a probability per trial per
 interval; for `PoissonModel`, events per unit of exposure (per interval, if you
 gave none).
 
-## 11. Size and speed
+## 12. Size and speed
 
 The cost grows with the square of the number of intervals T and in proportion
 to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
@@ -362,7 +409,7 @@ to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
 - Long series of a repeating pattern: fold them (Tutorial 4). It is faster and
   it is the better model.
 
-## 12. Pitfalls and questions
+## 13. Pitfalls and questions
 
 **"more than one spike in an interval: use a finer discretization".**
 `spike_counts` assumes at most one spike per trial per interval (the paper's

@@ -6,11 +6,23 @@
    `.github/workflows/publish.yml` (environment `pypi`, deployable from `v*` tags
    only). Next release: bump the version in `pyproject.toml`, then `git tag vX.Y.Z
    && git push origin vX.Y.Z`; a version can never be re-uploaded, only yanked.
-2. **Cyclic profiles**: a bin may wrap round the end of a day or week.
-3. **Ports from binsdfc**: latency posteriors, signal separation levels,
+2. **Streams without end** (after `OnlineBinning`, the exact incremental forward
+   pass, 2026-09-27): its cost per interval grows with the stream, and so does
+   the number of boundaries it needs, since the paper's prior (every M up to a
+   maximum, every placement equally likely) suits a fixed record, not an endless
+   one. The streaming form replaces it with a prior on segment lengths (a
+   constant chance of a change per interval): Bayesian online change-point
+   detection (Adams & MacKay 2007; Fearnhead & Liu 2007), the same Beta and
+   Gamma bin evidences, a distribution over the time since the last change, and
+   run lengths of negligible probability dropped (safe in practice, not
+   guaranteed). Its predictive distribution gives calibrated surprise (PIT)
+   values for a stream. Also: fixed-lag smoothing, the backward pass over the
+   last W intervals only; and the fused kernels for OnlineBinning's updates.
+3. **Cyclic profiles**: a bin may wrap round the end of a day or week.
+4. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.
-4. **2-D** via recursive partitions (below: where the method stops being 1-D).
-5. **The last sequential step**: the steps inside each 256-column block of the
+5. **2-D** via recursive partitions (below: where the method stops being 1-D).
+6. **The last sequential step**: the steps inside each 256-column block of the
    dynamic programme (about 15% of the time on 4 threads). A `prange` over
    columns per step cost more in launches than it saved. Running the forward
    and backward passes at once (two threads, half of numba's each) gained only

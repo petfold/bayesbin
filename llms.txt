@@ -22,6 +22,22 @@ PoissonModel.weak_prior(y, e=None, weight=1.0)    # Gamma prior centred on sum(y
 r = fit(model, max_boundaries=10, *, m_mass=None, keep_bins=False, min_m_posterior=1e-12, exact=False)
 ```
 
+Streaming (exact incremental forward pass, O(M*T) per new interval; same results as a batch fit of the data so far):
+
+```python
+from bayesbin import OnlineBinning
+ob = OnlineBinning.poisson(alpha, beta, max_boundaries=10)   # or OnlineBinning.bernoulli(max_boundaries, sigma, gamma)
+ob.update(y) / ob.update(y, e)                                # Bernoulli: ob.update(s, g); arrays = several intervals in order
+ob.rate_now() -> (mean, sd)                                   # the rate in the latest interval given the data so far
+ob.current_bin_start() -> p[a]                                # P(current bin starts at a), a = 0..T-1; p[0] = P(no change yet)
+ob.next_pmf(x, size) / ob.next_cdf(x, size)                   # predictive of the next count (size = exposure, or trials);
+                                                              # Bernoulli pmf is of the count (includes C(size, x))
+ob.log_evidence, ob.m_posterior, ob.m_map, ob.log_marginal, ob.T
+ob.fit() -> BinningResult                                     # full batch fit (smoothed past) of the data so far
+```
+
+The prior must be fixed up front (no weak_prior). Surprise of a new count before updating: `1 - ob.next_cdf(y - 1)` = P(count >= y).
+
 `fit` returns `BinningResult` (arrays indexed by interval k = 0..T-1, T = len(s) or len(y)):
 
 - `r.rate[k]`: posterior mean rate. Bernoulli: probability per trial per interval. Poisson: events per unit exposure.
