@@ -1,4 +1,4 @@
-// Modified 2026-09-26 by Peter Foldiak: plain evidences via forwardbackward.h (see README.fb.md).; 2026-09-27: passes iecConst to fb::fastForward
+// Modified 2026-09-26 by Peter Foldiak: plain evidences via forwardbackward.h (see README.fb.md); 2026-09-27: passes iecConst to fb::fastForward
 /***************************************************************************
  *   Copyright (C) 2006 by Dominik Endres   *
  *   research@itas-sys.com   *
