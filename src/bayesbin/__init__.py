@@ -11,10 +11,12 @@ from bayesbin.core import (
     spike_counts,
 )
 from bayesbin.online import OnlineBinning
+from bayesbin.stream import ChangePointStream
 
 __all__ = [
     "BernoulliModel",
     "BinningResult",
+    "ChangePointStream",
     "OnlineBinning",
     "PoissonModel",
     "bin_posterior",

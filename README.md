@@ -46,7 +46,11 @@ r = fit(PoissonModel.weak_prior(counts, exposure), max_boundaries=20)
 For data that arrive over time, `OnlineBinning` updates the forward programme one
 interval at a time (the rate now, the last change point and the predictive
 distribution of the next count, exactly as a batch fit of the data so far gives
-them); see the User Guide's Tutorial 5.
+them); see the User Guide's Tutorial 5. For endless streams, `ChangePointStream`
+is Bayesian online change-point detection with the same conjugate models:
+the rate now, the probability of a recent change and calibrated surprise
+(randomized PIT) for each new count, at a cost that does not grow with the
+stream (Tutorial 6).
 
 By default predictions average over every M, as the paper recommends;
 `m_mass=0.9` restricts them to the credible range of M, which is what the
@@ -108,7 +112,7 @@ to two dimensions.
 
 ## Verification
 
-`pytest` (48 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
+`pytest` (56 tests; 5 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](https://github.com/petfold/bayesbin/tree/main/reference)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -137,6 +141,9 @@ to two dimensions.
   evidences, the current rate and its sd, where the current bin starts, and the
   next-count predictive against batch marginal likelihoods of the data extended
   by each possible count.
+- `ChangePointStream` against enumeration of every segmentation (marginal
+  likelihood, run-length posterior, current rate); its PIT uniform on data from
+  the model and not on overdispersed data; pruning against the exact recursion.
 - The User Guide's examples run and print what the guide says they print.
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.

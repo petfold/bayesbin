@@ -20,10 +20,11 @@ Contents:
 7. [Tutorial 3: success rates](#7-tutorial-3-success-rates)
 8. [Tutorial 4: a daily profile](#8-tutorial-4-a-daily-profile)
 9. [Tutorial 5: data that arrive one at a time](#9-tutorial-5-data-that-arrive-one-at-a-time)
-10. [Choosing the settings](#10-choosing-the-settings)
-11. [Reading the results](#11-reading-the-results)
-12. [Size and speed](#12-size-and-speed)
-13. [Pitfalls and questions](#13-pitfalls-and-questions)
+10. [Tutorial 6: change points in a stream without end](#10-tutorial-6-change-points-in-a-stream-without-end)
+11. [Choosing the settings](#11-choosing-the-settings)
+12. [Reading the results](#12-reading-the-results)
+13. [Size and speed](#13-size-and-speed)
+14. [Pitfalls and questions](#14-pitfalls-and-questions)
 
 ## 1. Why not a histogram?
 
@@ -337,9 +338,65 @@ print(result.rate[[100, 170]].round(2))   # [2.9  8.42]: before and after the ch
 
 Each update costs time in proportion to the length of the stream so far (and
 to `max_boundaries`): about 1–2 ms per interval after a couple of thousand. For
-streams without end, see the plans in [docs/NOTES.md](NOTES.md#plan).
+streams without end, use the next tutorial's model.
 
-## 10. Choosing the settings
+## 10. Tutorial 6: change points in a stream without end
+
+`OnlineBinning` keeps the batch model, whose prior (any number of boundaries up
+to `max_boundaries`, equally likely) suits a record of fixed length: an endless
+stream would need ever more boundaries, and every update gets slower.
+`ChangePointStream` changes the prior instead: **each new interval starts a new
+segment with a small, constant probability** (you give the expected segment
+length), and each segment's rate is drawn afresh from the prior. This is
+Bayesian online change-point detection (Adams & MacKay 2007). There is no
+`max_boundaries`: the model keeps a probability for each possible time since
+the last change, and forgets the ones that have become negligible.
+
+```python
+from bayesbin import ChangePointStream
+
+rng = np.random.default_rng(9)
+stream = rng.poisson(np.repeat([4.0, 4.0, 12.0, 6.0, 20.0], 2000))   # a new rate every 2000 (one repeats)
+cp = ChangePointStream.poisson(alpha=1.0, beta=0.1, expected_run_length=1000)
+
+alarms = []
+for t, y in enumerate(stream):
+    q = cp.pit(y, u=rng.random())   # before the update: uniform in [0, 1) if the model fits
+    cp.update(y)
+    if cp.p_change_within(10) > 0.99 and t > 10 and (not alarms or t - alarms[-1] > 100):
+        alarms.append(t)
+
+print(alarms)   # [4003, 6006, 8001]: the three changes, within a few intervals; none at 2000
+rate, sd = cp.rate_now()
+print(f"{rate:.2f} ± {sd:.2f}")   # 19.88 ± 0.17
+```
+
+`p_change_within(k)` is the probability that the current segment began in the
+last k intervals; `run_length_posterior()` gives the whole distribution. The
+"change" at 2000 left the rate at 4, so nothing happened that the data could
+show, and no alarm was raised.
+
+**Surprise, calibrated.** `pit(y)` is the randomized probability integral
+transform of a count before it is added: where it falls in the model's
+predictive distribution, uniform between 0 and 1 when the model is right. Values
+near 1 are surprisingly high counts, near 0 surprisingly low. Because they are
+calibrated, they can be compared across quite different streams, and their
+uniformity can be checked: on data from the model the test suite finds them
+uniform; on bursty (overdispersed) counts they are far from it, which is the
+warning sign that the model does not fit.
+
+**Choosing `expected_run_length`**: how long, on average, you expect a rate to
+last. It sets how readily the model believes in a change; the results are not
+very sensitive to it within a factor of a few. **The prior** (`alpha`, `beta`,
+or `sigma`, `gamma` for success rates) should cover the rates you expect: a new
+segment's rate is drawn from it.
+
+**Cost**: each update costs time in proportion to the number of run lengths
+still plausible, roughly the length of the current segment (here up to 4000,
+about 1 ms per interval). `max_runs=` caps it by keeping only the most probable
+ones, which is approximate (here: 1% on the rates at a cap of 300).
+
+## 11. Choosing the settings
 
 There are few, and the defaults are sensible.
 
@@ -366,7 +423,7 @@ There are few, and the defaults are sensible.
 - **`exact=True`**: do everything in the slow, plain way (the reference the
   tests use). You will not need it.
 
-## 11. Reading the results
+## 12. Reading the results
 
 `fit` returns a `BinningResult`:
 
@@ -385,7 +442,7 @@ The units of `rate`: for `BernoulliModel`, a probability per trial per
 interval; for `PoissonModel`, events per unit of exposure (per interval, if you
 gave none).
 
-## 12. Size and speed
+## 13. Size and speed
 
 The cost grows with the square of the number of intervals T and in proportion
 to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
@@ -409,7 +466,7 @@ to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
 - Long series of a repeating pattern: fold them (Tutorial 4). It is faster and
   it is the better model.
 
-## 13. Pitfalls and questions
+## 14. Pitfalls and questions
 
 **"more than one spike in an interval: use a finer discretization".**
 `spike_counts` assumes at most one spike per trial per interval (the paper's

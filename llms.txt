@@ -38,6 +38,20 @@ ob.fit() -> BinningResult                                     # full batch fit (
 
 The prior must be fixed up front (no weak_prior). Surprise of a new count before updating: `1 - ob.next_cdf(y - 1)` = P(count >= y).
 
+Endless streams (Bayesian online change-point detection: a new segment starts each interval with probability 1/expected_run_length; no max_boundaries; exact up to pruning run lengths below `prune`):
+
+```python
+from bayesbin import ChangePointStream
+cp = ChangePointStream.poisson(alpha, beta, expected_run_length=1000)   # or .bernoulli(expected_run_length, sigma=1, gamma=1)
+q = cp.pit(y, size=None, u=None)       # before update: randomized PIT of y, uniform in [0,1) if calibrated (Bernoulli: size = trials, required)
+cp.update(y) / cp.update(y, e)         # Bernoulli: cp.update(s, n); arrays = several intervals
+cp.rate_now() -> (mean, sd); cp.p_change_within(k); cp.run_length_posterior() -> (lengths, probs)
+cp.next_pmf(x, size), cp.next_cdf(x, size), cp.next_logpmf(x, size); cp.log_marginal; cp.n_runs
+```
+
+Cost per update ~ number of plausible run lengths (~ length of the current segment); `max_runs=K` caps it (approximate, ~1% on rates at K=300 in a test).
+Bernoulli pmfs are of the count (include C(n, s)).
+
 `fit` returns `BinningResult` (arrays indexed by interval k = 0..T-1, T = len(s) or len(y)):
 
 - `r.rate[k]`: posterior mean rate. Bernoulli: probability per trial per interval. Poisson: events per unit exposure.
