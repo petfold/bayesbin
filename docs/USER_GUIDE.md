@@ -442,6 +442,16 @@ The units of `rate`: for `BernoulliModel`, a probability per trial per
 interval; for `PoissonModel`, events per unit of exposure (per interval, if you
 gave none).
 
+The streaming classes answer from their current state:
+
+| method | `OnlineBinning` | `ChangePointStream` |
+|---|---|---|
+| `rate_now()` | the rate in the latest interval and its sd | the same |
+| where the current segment began | `current_bin_start()`: P(it starts at a) | `run_length_posterior()`, `p_change_within(k)` |
+| the next count | `next_pmf(x, size)`, `next_cdf(x, size)` | the same, and `pit(x, size)` |
+| the evidence | `log_evidence`, `m_posterior`, `log_marginal` | `log_marginal` |
+| the past | `fit()`: the batch fit of the data so far | — |
+
 ## 13. Size and speed
 
 The cost grows with the square of the number of intervals T and in proportion
@@ -496,6 +506,17 @@ which gives error bars, change-point probabilities, and no penalty to tune.
 **Non-integer counts** (e.g. weights) work, on a slower path. **Intervals of
 unequal width**: use `PoissonModel` with the widths as exposure.
 
+**Is there a C++ version?** Yes: [binsdfc-fb](https://github.com/petfold/bayesbin/blob/main/cpp/binsdfc-fb/README.fb.md),
+the original command-line program by Dominik Endres with bayesbin's algorithms
+put into it (the forward–backward bin posterior, O(T·M) memory, OpenMP, the
+scaling that keeps data with strong steps fast). It reads spike trains in its
+own text format and prints the rate and its error bars; on 4 cores a long
+record takes it about 1.5 times as long as bayesbin, in a quarter of the memory. It is
+in the repository, under the GPL, not in the pip package; build it with the two
+compiler lines in its README.
+
 **More.** The method: [the paper](https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html)
 and [docs/NOTES.md](NOTES.md) (related papers, the 2-D question, performance
-notes). The code: [README](../README.md).
+notes). The code: [README](../README.md). The C++ version:
+[binsdfc-fb](../cpp/binsdfc-fb/README.fb.md). What changed between releases:
+[CHANGELOG](../CHANGELOG.md).

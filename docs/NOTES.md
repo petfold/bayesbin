@@ -2,7 +2,7 @@
 
 ## Plan
 
-1. **Released on PyPI** as `bayesbin` 0.1.0 (2026-09-27): trusted publishing from
+1. **Released on PyPI** as `bayesbin`: 0.1.0 and 0.2.0 (2026-09-27; see CHANGELOG.md), trusted publishing from
    `.github/workflows/publish.yml` (environment `pypi`, deployable from `v*` tags
    only). Next release: bump the version in `pyproject.toml`, then `git tag vX.Y.Z
    && git push origin vX.Y.Z`; a version can never be re-uploaded, only yanked.
@@ -50,7 +50,12 @@
   with provenance. Builds with a current g++; reproduces its documented tutorial.
 - **Matlab** — reported to exist; not located yet.
 - **bayesbin** (this repository) — NumPy/SciPy, written from the paper;
-  optional numba kernels for the element-wise work.
+  optional numba kernels (fused, multi-threaded); `OnlineBinning` and
+  `ChangePointStream` for data that arrive over time.
+- **binsdfc-fb** (this repository, [cpp/binsdfc-fb/](../cpp/binsdfc-fb/README.fb.md))
+  — binsdfc 0.1 with bayesbin's algorithms: the forward–backward bin
+  posterior, O(T·M) memory, OpenMP, the saturated reference and fast exact
+  fallback, coverage normalisation. GPL-2.0-or-later.
 
 ## Performance lessons (bayesbin)
 

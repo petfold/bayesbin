@@ -4,7 +4,7 @@
 
 ## Use it for / not for
 
-- For: spike trains over repeated trials (PSTH); event counts per window, optionally with exposure (observation time, population); successes out of trials per interval; change-point detection with uncertainty; daily/weekly profiles (fold: days as repeats).
+- For: spike trains over repeated trials (PSTH); event counts per window, optionally with exposure (observation time, population); successes out of trials per interval; change-point detection with uncertainty; daily/weekly profiles (fold: days as repeats); live streams (OnlineBinning, ChangePointStream: rate now, recent changes, calibrated surprise).
 - Not for: unordered categories; 2-D data; heavily overdispersed (bursty, clumped) counts, which it reads as many rate changes; trials that differ systematically from each other (it estimates their average profile).
 - Assumes: rate constant within a bin; events independent given the rate (Poisson counts; independent Bernoulli trials sharing one profile); a priori every number of boundaries 0..max equally likely, every boundary placement equally likely, bin rates independent (no smoothness prior).
 
@@ -94,5 +94,7 @@ r = fit(PoissonModel.weak_prior((counts * observed).sum(0), observed.sum(0)), 15
 
 - docs/USER_GUIDE.md: tutorial (why, assumptions, four worked examples, pitfalls)
 - README.md: verification, speed tables, licences
-- docs/NOTES.md: related papers, 2-D extensions, implementation notes
+- docs/NOTES.md: related papers, 2-D extensions, implementation notes, plans
+- CHANGELOG.md: changes per release
+- cpp/binsdfc-fb/README.fb.md: the C++ command-line version (Endres's binsdfc with bayesbin's algorithms; GPL-2.0-or-later; not in the pip package; spike trains in its own text format)
 - Paper: https://papers.nips.cc/paper_files/paper/2007/hash/b73ce398c39f506af761d2277d853a92-Abstract.html

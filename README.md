@@ -20,8 +20,9 @@ posterior of every candidate bin at once, from which the predictive rate, its
 error bars and the posterior over boundary positions follow.
 
 **New to this? Start with the [User Guide](https://github.com/petfold/bayesbin/blob/main/docs/USER_GUIDE.md)**: why fixed-width
-bins mislead, the assumptions in plain words, four worked examples (spike
-trains, counts with exposure, success rates, a daily profile) and the pitfalls.
+bins mislead, the assumptions in plain words, six worked examples (spike
+trains, counts with exposure, success rates, a daily profile, data arriving one
+at a time, change points in an endless stream) and the pitfalls.
 For AI coding assistants there is a compact [llms.txt](https://github.com/petfold/bayesbin/blob/main/llms.txt).
 
 ```sh
@@ -49,8 +50,8 @@ distribution of the next count, exactly as a batch fit of the data so far gives
 them); see the User Guide's Tutorial 5. For endless streams, `ChangePointStream`
 is Bayesian online change-point detection with the same conjugate models:
 the rate now, the probability of a recent change and calibrated surprise
-(randomized PIT) for each new count, at a cost that does not grow with the
-stream (Tutorial 6).
+(randomized PIT) for each new count, at a cost per count set by the length of
+the current segment, not of the stream (Tutorial 6).
 
 By default predictions average over every M, as the paper recommends;
 `m_mass=0.9` restricts them to the credible range of M, which is what the
@@ -90,6 +91,9 @@ widths by hand:
   rate changes after each interval, averaged over every segmentation.
 - **Periodic profiles**: daily or weekly shapes, with the days (or weeks) as
   trials and the time of day as the axis.
+- **Live streams**: the rate now, recent change points and a calibrated
+  surprise score for each new count, as the data arrive (`OnlineBinning`,
+  `ChangePointStream`).
 
 Nothing is fitted by optimisation and nothing is sampled: every segmentation
 into up to M + 1 bins, and every M, is summed exactly. Compared with
@@ -109,6 +113,32 @@ to two dimensions.
 | `PoissonModel(y, alpha, beta, e)` | count y over exposure e | λ ~ Gamma(α, β) | event counts per window |
 
 `BernoulliModel` defaults to σ = 1, γ = 32, the original program's default.
+
+For data that arrive over time, with the same two likelihoods:
+
+| class | prior over segmentations | gives | cost per new interval |
+|---|---|---|---|
+| `OnlineBinning` | as `fit`: up to `max_boundaries` boundaries | exactly what `fit` gives for the latest interval, the next count's predictive; `fit()` for the past | grows with the data so far |
+| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT | grows with the current segment |
+
+## The C++ version: binsdfc-fb
+
+The repository also holds **[binsdfc-fb](https://github.com/petfold/bayesbin/blob/main/cpp/binsdfc-fb/README.fb.md)**,
+Dominik Endres's original command-line program (binsdfc 0.1, for spike trains in
+its own input format) with bayesbin's algorithms put into it:
+
+- the forward–backward bin posterior instead of the paper's virtual-spike device:
+  O(M·T²) instead of O(M·T³) (T = 600, one core: 50 s → 0.03 s);
+- table-driven bin evidences, a column-blocked, cache-friendly central
+  iteration and O(T·M) memory (2.1 GB → 61 MB at T = 12096), OpenMP throughout;
+- a scaling against every interval as its own bin, and a fast, parallel exact
+  fallback, for data with strong steps (400 trials with sharp changes: 0.80 s →
+  0.14 s on 4 threads); the rates and sd divided by the computed coverage.
+
+Its printed output equals the previous builds' and agrees with bayesbin to its
+6 printed digits; `-V` runs the original's paths, bit for bit. Build it with the
+two g++ lines in its README (CI does); it is GPL-2.0-or-later, and not part of
+the PyPI package. Timings against bayesbin are in the tables below.
 
 ## Verification
 
@@ -141,6 +171,10 @@ to two dimensions.
   evidences, the current rate and its sd, where the current bin starts, and the
   next-count predictive against batch marginal likelihoods of the data extended
   by each possible count.
+- **binsdfc-fb** against bayesbin and the original (`-V` equal to the original's
+  output, bit for bit), on data that exercise its underflow bounds, and its
+  count of columns needing the exact sum (`BINSDFC_FB_STATS`), which catches a
+  scaling regression that leaves the results right but slow.
 - `ChangePointStream` against enumeration of every segmentation (marginal
   likelihood, run-length posterior, current rate); its PIT uniform on data from
   the model and not on overdispersed data; pruning against the exact recursion.
@@ -169,10 +203,12 @@ to two dimensions.
 - Not yet ported from the original: latency posteriors, signal separation
   levels, hyperparameter optimisation (`-P`), bin-boundary position posteriors
   for a fixed M (`-p`).
-- Planned: a release on PyPI, so that `pip install bayesbin` works (steps in
-  [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)); cyclic profiles (a bin may wrap round
-  the end of a day or week); 2-D via recursive partitions (see
-  [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md)).
+- Streams: `ChangePointStream`'s state grows with the current segment's length
+  (every run length since the last change stays plausible); `max_runs` caps it,
+  approximately. `OnlineBinning`'s cost per interval grows with the data so far.
+- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): a bounded stream
+  state (merging old run lengths), cyclic profiles (a bin may wrap round the end
+  of a day or week), 2-D via recursive partitions.
 
 ## Speed against the original
 
@@ -193,8 +229,8 @@ process).
 | T=2016, M≤30, evidence only | 2.0 s | — | 0.14 s | 0.088 s | 0.14 s | 0.083 s | 0.035 s |
 | T=2016, M≤30, rate ± sd | stopped after 26 min | | 0.33 s | 0.17 s | 0.51 s | 0.26 s | 0.099 s |
 
-`binsdfc-fb` is the original with the forward–backward SDF, the matrix-vector
-central iteration and table-driven bin evidences added ([cpp/binsdfc-fb/](https://github.com/petfold/bayesbin/blob/main/cpp/binsdfc-fb/README.fb.md)); best
+`binsdfc-fb` is the original with bayesbin's algorithms added (see
+[above](#the-c-version-binsdfc-fb) and [its README](https://github.com/petfold/bayesbin/blob/main/cpp/binsdfc-fb/README.fb.md)); best
 of 5 runs. (binsdfc itself always runs 4 threads.)
 
 - The evidences use the same dynamic programme in both. binsdfc's triple loop
