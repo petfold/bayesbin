@@ -1,6 +1,7 @@
 # bayesbin
 
 [![tests](https://github.com/petfold/bayesbin/actions/workflows/tests.yml/badge.svg)](https://github.com/petfold/bayesbin/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/bayesbin)](https://pypi.org/project/bayesbin/)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/petfold/bayesbin/blob/main/LICENSE)
 [![status](https://img.shields.io/badge/status-beta-yellow)](#status-and-limits)
 

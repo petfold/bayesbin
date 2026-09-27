@@ -2,17 +2,10 @@
 
 ## Plan
 
-1. **Publish on PyPI** as `bayesbin` (the name was free on 2026-09-27), with
-   the `fast` extra (numba). The workflow is in place
-   (`.github/workflows/publish.yml`, trusted publishing, no stored token):
-   - on pypi.org, add a pending trusted publisher: project `bayesbin`, owner
-     `petfold`, repository `bayesbin`, workflow `publish.yml`, environment
-     `pypi` (the operator does this, with their own PyPI account);
-   - check the version in `pyproject.toml`, then `git tag v0.1.0 && git push
-     origin v0.1.0`: the workflow runs the tests, builds, checks and uploads.
-     A version can never be re-uploaded, only yanked;
-   - afterwards: the README's install lines become `pip install bayesbin` /
-     `pip install "bayesbin[fast]"`, and a PyPI badge goes next to the others.
+1. **Released on PyPI** as `bayesbin` 0.1.0 (2026-09-27): trusted publishing from
+   `.github/workflows/publish.yml` (environment `pypi`, deployable from `v*` tags
+   only). Next release: bump the version in `pyproject.toml`, then `git tag vX.Y.Z
+   && git push origin vX.Y.Z`; a version can never be re-uploaded, only yanked.
 2. **Cyclic profiles**: a bin may wrap round the end of a day or week.
 3. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.
