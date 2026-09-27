@@ -604,7 +604,7 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
     mb[~np.isfinite(mb)] = 0.0
     A = _scaled_factor(np.subtract(left, ma)).T  # (T, K); products carry _UP²
     B = _scaled_factor(np.subtract(R, mb))  # (K, T)
-    d1, d2, ends = np.zeros(T + 1), np.zeros(T + 1), np.zeros(T)
+    d0, d1, d2, ends = np.zeros(T + 1), np.zeros(T + 1), np.zeros(T + 1), np.zeros(T)
     log_risk = np.log(K * _CUT) - np.log(max(tol, _TINY))
     kern = model._kernel() if _FAST is not None else None
     if kern is not None:  # the tile's element-wise work in one fused pass
@@ -617,8 +617,8 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
                 for b0 in range(a0 - a0 % tile_b, T, tile_b):  # tiles of ends aligned to tile_b
                     _FAST.tile_accumulate(*params, float(sh0), float(sh1), A_c, Bt[b0 // tile_b],
                                           1.0 / _UP**2, a0, a1, b0, ma, mb, left_c, R_c, log_risk,
-                                          d1, d2, ends)
-        return np.cumsum(d1)[:T], np.cumsum(d2)[:T], ends[:T - 1]
+                                          d0, d1, d2, ends)
+        return _normalised(d0, d1, d2, ends)
     log_up2 = 2 * np.log(_UP)
     for a0 in range(0, T, tile_a):
         a1 = min(T, a0 + tile_a)
@@ -646,12 +646,24 @@ def _bin_sums(model, fwd: np.ndarray, bwd: np.ndarray, log_c: np.ndarray, *,
             q1 *= W  # W * E[f | bin], in m1's storage
             q2 = m2
             q2 *= W
+            d0[a0:a1] += W.sum(axis=1)
             d1[a0:a1] += q1.sum(axis=1)
             d2[a0:a1] += q2.sum(axis=1)
+            Wb = W.sum(axis=0)
+            d0[b0 + 1:b1 + 1] -= Wb
             d1[b0 + 1:b1 + 1] -= q1.sum(axis=0)
             d2[b0 + 1:b1 + 1] -= q2.sum(axis=0)
-            ends[b0:b1] += W.sum(axis=0)
-    return np.cumsum(d1)[:T], np.cumsum(d2)[:T], ends[:T - 1]
+            ends[b0:b1] += Wb
+    return _normalised(d0, d1, d2, ends)
+
+
+def _normalised(d0, d1, d2, ends):
+    """E[f_k | D], E[f_k² | D] and the boundary posterior from the difference arrays, the
+    moments divided by the computed coverage Σ_{bins ∋ k} W (1 in exact arithmetic;
+    see fit)."""
+    T = len(ends)
+    cover = np.cumsum(d0)[:T]
+    return np.cumsum(d1)[:T] / cover, np.cumsum(d2)[:T] / cover, ends[:T - 1]
 
 
 def credible_m_range(log_evidence: np.ndarray, mass: float) -> tuple[int, int]:
@@ -708,12 +720,17 @@ def fit(model, max_boundaries: int = 10, *, m_mass: float | None = None,
     if full:
         mean, second = model.bin_moments()
         W = bin_posterior(L, fwd, bwd, log_c, exact=exact)
-        rate = _cover_sum(W * np.nan_to_num(mean))
-        ef2 = _cover_sum(W * np.nan_to_num(second))
+        cover = _cover_sum(W)
+        rate = _cover_sum(W * np.nan_to_num(mean)) / cover
+        ef2 = _cover_sum(W * np.nan_to_num(second)) / cover
         boundary = W[:, :-1].sum(axis=0)  # bins ending at b < T-1
     else:
         rate, ef2, boundary = _bin_sums(model, fwd, bwd, log_c)
         W = None
+    # The moments are divided by the computed coverage (the posterior of the bins covering
+    # each interval, 1 in exact arithmetic): its rounding error, 1e-11 on data whose
+    # evidences span 1e5 nats, is the same factor in both moments, and var = E[f²] - E[f]²
+    # would amplify it by rate²/var (1e-6 in the sd at rate 400 ± 1.6; 1e-10 normalised).
     var = np.clip(ef2 - rate**2, 0.0, None)
     return BinningResult(log_ev, post, rate, np.sqrt(var), boundary, W if keep_bins else None)
 

@@ -327,7 +327,7 @@ def block_steps(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, T, reverse, b,
 
 @njit(inline="always", cache=True)
 def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
-                     A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends):
+                     A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d0, d1, d2, ends):
     na, nb = a1 - a0, Bt.shape[1]
     cmin = _TINY / cscale
     K = left.shape[0]
@@ -337,6 +337,7 @@ def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
     col1 = np.zeros((ng, nb))
     col2 = np.zeros((ng, nb))
     colw = np.zeros((ng, nb))
+    rows0 = np.zeros(na)
     rows1 = np.zeros(na)
     rows2 = np.zeros(na)
     for g in prange(ng):
@@ -344,6 +345,7 @@ def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
         for i in range(g * _RB, min(na, (g + 1) * _RB)):
             a = a0 + i
             mai = ma[a]
+            row0 = 0.0
             row1 = 0.0
             row2 = 0.0
             for j in range(max(0, a - b0), nb):
@@ -370,14 +372,17 @@ def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
                 m1, m2 = _moments(code, P1, P2, k1, sh0, sh1, a, bb)
                 q1 = W * m1
                 q2 = W * m2
+                row0 += W
                 row1 += q1
                 row2 += q2
                 col1[g, j] += q1
                 col2[g, j] += q2
                 colw[g, j] += W
+            rows0[i] = row0
             rows1[i] = row1
             rows2[i] = row2
     for i in range(na):  # the ranges a..b through the difference arrays: +q at a
+        d0[a0 + i] += rows0[i]
         d1[a0 + i] += rows1[i]
         d2[a0 + i] += rows2[i]
     for j in prange(nb):  # -q at b + 1, the groups in a fixed order
@@ -388,6 +393,7 @@ def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
             s1 += col1[g, j]
             s2 += col2[g, j]
             sw += colw[g, j]
+        d0[b0 + j + 1] -= sw
         d1[b0 + j + 1] -= s1
         d2[b0 + j + 1] -= s2
         ends[b0 + j] += sw
@@ -395,20 +401,21 @@ def _tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
 
 @njit(cache=True, nogil=True, parallel=True)
 def tile_accumulate(code, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
-                    A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends):
+                    A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d0, d1, d2, ends):
     """For the bins of one tile (starts a0..a1-1, ends b0..b0+nb-1): W = cscale C[a, b]
     exp(ma[a] + mb[b] + L[a, b]) with C = A[a0:a1] @ Bt (or, where underflow could matter,
-    exactly in log space), and its contributions to the rates, second moments and boundary
+    exactly in log space), and its contributions to the coverage (d0: the bins' W, which
+    sums to 1 over the bins covering each interval), rates, second moments and boundary
     posterior, in one pass."""
     if code == 0:
         _tile_accumulate(0, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
-                         A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends)
+                         A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d0, d1, d2, ends)
     elif code == 1:
         _tile_accumulate(1, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
-                         A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends)
+                         A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d0, d1, d2, ends)
     else:
         _tile_accumulate(2, P1, P2, T1, T2, T3, k0, k1, k2, k3, sh0, sh1,
-                         A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d1, d2, ends)
+                         A, Bt, cscale, a0, a1, b0, ma, mb, left, R, log_risk, d0, d1, d2, ends)
 
 
 @njit(cache=True, nogil=True, parallel=True)

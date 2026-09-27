@@ -97,7 +97,7 @@ to two dimensions.
 
 ## Verification
 
-`pytest` (33 tests; 4 need `cpp/binsdfc-fb` built, 4 need the `fast` extra):
+`pytest` (39 tests; 4 need `cpp/binsdfc-fb` built, 7 need the `fast` extra):
 
 - **Against the original C++ program** (`binsdfc` 0.1, in [reference/](reference/)),
   on a seeded dataset in its own input format (`tools/make_testdata.py`):
@@ -115,6 +115,13 @@ to two dimensions.
   thousands of nats, with the underflow fallback forced; the fused kernels
   against the NumPy path and the exact one, for both models (constant and
   varying exposure).
+- **Against a long-double reference** (`tools/longdouble_reference.py`: the
+  whole computation in 80-bit arithmetic, the variance in its stable form),
+  on steps strong enough that the sd, √(E[f²] − E[f]²), cancels: every path's
+  rate to 10⁻¹², its sd to 10⁻⁹. (Both moments are divided by the computed
+  coverage, the posterior of the bins covering each interval, which is 1 in
+  exact arithmetic; its rounding error would otherwise reach the sd amplified
+  by rate²/var.)
 - One-bin evidences against direct numerical integration; every interval
   covered by exactly one bin; the simulated response onset recovered.
 

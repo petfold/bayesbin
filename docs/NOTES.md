@@ -17,12 +17,7 @@
 3. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.
 4. **2-D** via recursive partitions (below: where the method stops being 1-D).
-5. **The standard deviation where the rate is large and tightly determined**:
-   it is √(E[f²] − E[f]²), which cancels: at rate 400 with sd 1.6 a 1e-10
-   relative error in the moments becomes 4e-6 in the sd (seen on the strongest
-   test data). The posterior variance as E[Var(f | bin)] + Var(E[f | bin]),
-   about a pivot near the rate, would avoid it.
-6. **The last sequential step**: the steps inside each 256-column block of the
+5. **The last sequential step**: the steps inside each 256-column block of the
    dynamic programme (about 15% of the time on 4 threads). A `prange` over
    columns per step cost more in launches than it saved. Running the forward
    and backward passes at once (two threads, half of numba's each) gained only
@@ -88,6 +83,16 @@
   nats below the running maximum not exponentiated) and runs a step's columns
   in parallel: 0.09 s on 4 threads. With stronger steps (rates 20 → 400) most
   columns still fall back, and fast: T=4800 with 16 steps, 31 s → 3.2 s.
+- The sd, √(E[f²] − E[f]²), cancels where a rate is large and tightly known:
+  at rate 400 ± 1.6 an error in the moments grows 6·10⁴ times. The error that
+  mattered was one factor common to both moments: the computed coverage (the
+  posterior of the bins covering an interval, 1 in exact arithmetic) was off
+  by 2.5·10⁻¹¹ even from the exact path, as the evidences span 10⁵ nats. So
+  the sd was 1e-7 to 1e-6 off in every path, the exact one included. Dividing
+  both moments by the computed coverage (one more difference array) brought
+  the rate from 2.5·10⁻¹¹ to 7.5·10⁻¹⁴ and the sd to 10⁻¹⁰, against a
+  long-double reference; the stable two-pass variance would reach 10⁻¹¹ but
+  needs a second pass over all bins.
 
 ## Where the method stops being 1-D
 

@@ -421,7 +421,7 @@ def _very_strong_steps():
 def test_very_strong_steps_equal_the_exact_path(fused, monkeypatch):
     """Evidences spanning tens of thousands of nats: most columns of the forward pass
     need the exact fallback, whose shortcuts (one pass, terms far below the maximum
-    dropped) must not show."""
+    dropped) must not show; and rates known to ±0.4%, whose sd cancels."""
     import bayesbin.core as core
 
     if fused and core._FAST is None:
@@ -432,7 +432,34 @@ def test_very_strong_steps_equal_the_exact_path(fused, monkeypatch):
     got, ref = fit(model, 12), fit(model, 12, exact=True)
     np.testing.assert_allclose(got.log_evidence, ref.log_evidence, rtol=1e-13)
     np.testing.assert_allclose(got.rate, ref.rate, rtol=1e-9)
+    # the sd, √(E[f²] - E[f]²), amplifies moment errors by rate²/var (6e4 at rate 400 ±
+    # 1.6): unnormalised by the computed coverage, both paths were 1e-6 off
+    np.testing.assert_allclose(got.rate_std, ref.rate_std, rtol=1e-8)
     np.testing.assert_allclose(got.boundary_posterior, ref.boundary_posterior, atol=1e-9)
+
+
+@pytest.mark.parametrize("path", ["fused", "numpy", "exact"])
+def test_rate_and_sd_against_a_long_double_reference(path, monkeypatch):
+    """Against tools/longdouble_reference.py (long double, the variance in its stable
+    form), on steps strong enough that the sd cancels."""
+    import sys
+    from pathlib import Path
+
+    import bayesbin.core as core
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    from longdouble_reference import reference
+
+    if path == "fused" and core._FAST is None:
+        pytest.skip("fused kernels switched off or not installed")
+    if path == "numpy":
+        monkeypatch.setattr(core, "_FAST", None)
+    rng = np.random.default_rng(6)
+    model = PoissonModel.weak_prior(rng.poisson(np.repeat([20.0, 200.0, 50.0, 400.0], 40)).astype(float))
+    rate, sd = reference(model, 8)
+    got = fit(model, 8, exact=(path == "exact"))
+    np.testing.assert_allclose(got.rate, rate.astype(float), rtol=1e-12)
+    np.testing.assert_allclose(got.rate_std, sd.astype(float), rtol=1e-9)
 
 
 def test_strong_steps_keep_most_columns_on_the_fast_path(monkeypatch):
