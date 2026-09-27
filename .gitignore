@@ -9,3 +9,4 @@ cpp/binsdfc-fb/binsdfc_*
 cpp/binsdfc-fb/build/
 /build/
 /dist/
+*.o

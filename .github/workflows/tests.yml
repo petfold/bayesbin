@@ -19,4 +19,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[${{ matrix.extras }}]"
-      - run: pytest  # the tests against the C++ program skip: it is not built here
+      - name: Build cpp/binsdfc-fb (the tests against it skip without it)
+        working-directory: cpp/binsdfc-fb
+        run: |
+          g++ -O2 -fopenmp -ffast-math -c vmath.cpp -o vmath.o
+          g++ -O2 -fopenmp -fno-math-errno -std=c++14 -o binsdfc binsdfc.cpp evidencecomputer.cpp \
+              logadd.cpp simplexminimiser.cpp spikecounter.cpp spikedensityfunction.cpp \
+              forwardbackward.cpp vmath.o
+          test -x binsdfc
+      - run: pytest -rs  # -rs: list any skipped test and why
