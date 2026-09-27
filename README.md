@@ -78,9 +78,10 @@ Any rate that varies along an ordered axis and is observed as events per
 interval, where you want the rate *and* its uncertainty without choosing bin
 widths by hand:
 
-- **Peri-stimulus time histograms** (the paper's case): spike trains over
-  repeated trials, the firing probability per millisecond, with error bars,
-  from a few dozen trials.
+- **Peri-stimulus time histograms** (the paper's case): how often a nerve cell
+  fires around a repeated stimulus, from the times of its electrical pulses
+  (spikes) in each repetition: the firing probability per millisecond, with
+  error bars, from a few dozen repetitions.
 - **Event counts per window**: arrivals, requests, incidents, photon or
   particle counts, cases per week — with an exposure per window (observation
   time, population, detector area) when windows differ.

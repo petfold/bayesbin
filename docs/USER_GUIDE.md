@@ -43,8 +43,21 @@ width and plot the counts. Everything then depends on the width:
   width does both. And where exactly the bin edges fall (at 0, or at 5?) changes
   the picture too.
 
+**The example comes from neuroscience, where the method began.** Nerve cells
+(neurons) signal to each other with brief electrical pulses, *spikes*, each
+about a millisecond long, and much of what they convey is in how often they
+fire. A recording of the times at which one neuron fired is a *spike train*.
+To see how a neuron responds to something (a flash of light, a sound), an
+experimenter presents it many times and lines the recordings up on the moment
+it appeared; counting the spikes in each small time bin across all the
+repetitions gives the **peri-stimulus time histogram** (PSTH: "peri-stimulus"
+means around the stimulus), the standard picture of a neuron's response. Its
+bars estimate the neuron's firing rate at each moment, and its bin width is
+exactly the choice described above. Nothing below depends on the biology: the
+same problem arises for any events counted over time.
+
 The figure shows 30 repeated trials of a simulated neuron: background firing, a
-sudden 50-ms burst after a stimulus, a long plateau, back to background. The
+sudden 50-ms burst after the stimulus, a long plateau, back to background. The
 dashed line is the true rate.
 
 <picture>
@@ -204,8 +217,9 @@ environment (about a minute, once); after that they load from a cache.
 
 ## 6. Tutorial 1: spike trains (a PSTH)
 
-Thirty trials, spike times in milliseconds, recorded from 100 ms before a
-stimulus to 500 ms after. We simulate them here; with your own data, `trials`
+The example of section 1 (spike trains and PSTHs are explained there): thirty
+trials, spike times in milliseconds, recorded from 100 ms before a stimulus to
+500 ms after. We simulate them here; with your own data, `trials`
 is a list with one array of integer spike times per trial.
 
 ```python
