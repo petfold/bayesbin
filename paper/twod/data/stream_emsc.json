@@ -1,0 +1,241 @@
+{
+ "cells": 2916,
+ "events": 39313,
+ "windows": 25919,
+ "days": 89.99652777777777,
+ "window_seconds": 300,
+ "rho": 0.1,
+ "variants": [
+  "cell alone (Layer 0 today)",
+  "the resolution-2 cell",
+  "tree, memory 3 days",
+  "tree, memory 30 days",
+  "tree, memory all"
+ ],
+ "classes": {
+  "busy": {
+   "label": "300 or more",
+   "cells": 14,
+   "events": 9628,
+   "variants": {
+    "cell alone (Layer 0 today)": {
+     "ks": 0.0018208650025078321,
+     "p999": 0.001030683503001108,
+     "p99": 0.01001471617621932,
+     "alarms_per_cell_day": 0.07778077857942052,
+     "log_score_per_cell_day": 0.0
+    },
+    "the resolution-2 cell": {
+     "ks": 0.01471259362960431,
+     "p999": 0.004345956909713227,
+     "p99": 0.02313250621441524,
+     "alarms_per_cell_day": 0.2579464595746088,
+     "log_score_per_cell_day": -4.86286438697642
+    },
+    "tree, memory 3 days": {
+     "ks": 0.0018456675466976824,
+     "p999": 0.0010747769148942033,
+     "p99": 0.010091879647032238,
+     "alarms_per_cell_day": 0.08651127413425343,
+     "log_score_per_cell_day": -0.003504393557757854
+    },
+    "tree, memory 30 days": {
+     "ks": 0.0018539350614276695,
+     "p999": 0.0010940677825974326,
+     "p99": 0.010130461382438696,
+     "alarms_per_cell_day": 0.09127336261870775,
+     "log_score_per_cell_day": -0.01801079693315159
+    },
+    "tree, memory all": {
+     "ks": 0.0018759817673741908,
+     "p999": 0.0011106028120573435,
+     "p99": 0.010155263926628563,
+     "alarms_per_cell_day": 0.09127336261870775,
+     "log_score_per_cell_day": -0.026082266666591223
+    }
+   },
+   "weight_by_res": [
+    0.0016284222221934082,
+    0.022698066281562772,
+    0.04870350374681416,
+    0.9269700077494296
+   ]
+  },
+  "medium": {
+   "label": "31--299",
+   "cells": 230,
+   "events": 16686,
+   "variants": {
+    "cell alone (Layer 0 today)": {
+     "ks": 0.0007491650409217065,
+     "p999": 0.0008721149668616442,
+     "p99": 0.009369322823444947,
+     "alarms_per_cell_day": 0.04502589169939125,
+     "log_score_per_cell_day": 0.0
+    },
+    "the resolution-2 cell": {
+     "ks": 0.0009650717871898529,
+     "p999": 0.0018021025368329764,
+     "p99": 0.010870487824107546,
+     "alarms_per_cell_day": 0.20855877088655797,
+     "log_score_per_cell_day": -0.31724298265555106
+    },
+    "tree, memory 3 days": {
+     "ks": 0.0006021266923543211,
+     "p999": 0.0011166896200034556,
+     "p99": 0.009746081857022798,
+     "alarms_per_cell_day": 0.08995516131359067,
+     "log_score_per_cell_day": -0.033276270688090324
+    },
+    "tree, memory 30 days": {
+     "ks": 0.0005828358246510734,
+     "p999": 0.0011708717962481778,
+     "p99": 0.00980596742024065,
+     "alarms_per_cell_day": 0.11725090038028171,
+     "log_score_per_cell_day": -0.08381669287191072
+    },
+    "tree, memory all": {
+     "ks": 0.0005415114310972358,
+     "p999": 0.0013038949100626198,
+     "p99": 0.009999714830651344,
+     "alarms_per_cell_day": 0.1503922756010783,
+     "log_score_per_cell_day": -0.12383282108816358
+    }
+   },
+   "weight_by_res": [
+    0.020823434308340178,
+    0.0736408081786109,
+    0.2011162104618256,
+    0.7044195470512256
+   ]
+  },
+  "sparse": {
+   "label": "3--30",
+   "cells": 1193,
+   "events": 11093,
+   "variants": {
+    "cell alone (Layer 0 today)": {
+     "ks": 0.000608431218451555,
+     "p999": 0.0005309920483140347,
+     "p99": 0.009415916185076811,
+     "alarms_per_cell_day": 0.05222330565139634,
+     "log_score_per_cell_day": 0.0
+    },
+    "the resolution-2 cell": {
+     "ks": 0.0002430851456211025,
+     "p999": 0.0009293250198155857,
+     "p99": 0.009808363258972348,
+     "alarms_per_cell_day": 0.07704497669847521,
+     "log_score_per_cell_day": 0.017259347306833973
+    },
+    "tree, memory 3 days": {
+     "ks": 0.00014787476892597073,
+     "p999": 0.0009535154121743712,
+     "p99": 0.009904833767536862,
+     "alarms_per_cell_day": 0.06671580852166077,
+     "log_score_per_cell_day": 0.03764925086626875
+    },
+    "tree, memory 30 days": {
+     "ks": 0.0001122683224191734,
+     "p999": 0.0010096254800119283,
+     "p99": 0.009972844990973393,
+     "alarms_per_cell_day": 0.07997887027439635,
+     "log_score_per_cell_day": 0.017937064593396296
+    },
+    "tree, memory all": {
+     "ks": 0.00010615604413610757,
+     "p999": 0.0010195538897099859,
+     "p99": 0.00998872397847094,
+     "alarms_per_cell_day": 0.08266128725809568,
+     "log_score_per_cell_day": 0.014337869358957738
+    }
+   },
+   "weight_by_res": [
+    0.15914316160430175,
+    0.3192209093271467,
+    0.33894588584476026,
+    0.18269004322379745
+   ]
+  },
+  "rare": {
+   "label": "1--2",
+   "cells": 1479,
+   "events": 1906,
+   "variants": {
+    "cell alone (Layer 0 today)": {
+     "ks": 0.0005970655290298277,
+     "p999": 0.0004354336223154879,
+     "p99": 0.009419447662415084,
+     "alarms_per_cell_day": 0.013410479065417329,
+     "log_score_per_cell_day": 0.0
+    },
+    "the resolution-2 cell": {
+     "ks": 0.0002343706081157082,
+     "p999": 0.0008817713456451069,
+     "p99": 0.009865759299378642,
+     "alarms_per_cell_day": 0.013628352394771448,
+     "log_score_per_cell_day": 0.10753558834487685
+    },
+    "tree, memory 3 days": {
+     "ks": 0.0002618656379455575,
+     "p999": 0.0009359266415908864,
+     "p99": 0.009932227360105928,
+     "alarms_per_cell_day": 0.013883790091255588,
+     "log_score_per_cell_day": 0.11287599068460809
+    },
+    "tree, memory 30 days": {
+     "ks": 0.0002696393750322157,
+     "p999": 0.0009532219022903334,
+     "p99": 0.009950644334546063,
+     "alarms_per_cell_day": 0.013966431698941633,
+     "log_score_per_cell_day": 0.11353748166970232
+    },
+    "tree, memory all": {
+     "ks": 0.00026888287041637593,
+     "p999": 0.0009527262613351456,
+     "p99": 0.009949835657198125,
+     "alarms_per_cell_day": 0.013913841584959605,
+     "log_score_per_cell_day": 0.11311350236264946
+    }
+   },
+   "weight_by_res": [
+    0.38260408671219975,
+    0.3829436741871319,
+    0.20140942299818498,
+    0.033042816102507776
+   ]
+  }
+ },
+ "log_score_gain": {
+  "cell alone (Layer 0 today)": 0.0,
+  "the resolution-2 cell": 3472.925424871296,
+  "tree, memory 3 days": 18373.37996952871,
+  "tree, memory 30 days": 15280.58811225531,
+  "tree, memory all": 13999.252164595768
+ },
+ "alarms_per_day": {
+  "cell alone (Layer 0 today)": 93.58138817083993,
+  "the resolution-2 cell": 163.65075813110076,
+  "tree, memory 3 days": 122.02693005131371,
+  "tree, memory 30 days": 144.31667888421623,
+  "tree, memory all": 155.0615378679733
+ },
+ "big": {
+  "quakes": 592,
+  "min_mag": 5.0,
+  "in_window": {
+   "cell alone (Layer 0 today)": 301,
+   "the resolution-2 cell": 423,
+   "tree, memory 3 days": 365,
+   "tree, memory 30 days": 414,
+   "tree, memory all": 436
+  },
+  "within_hour": {
+   "cell alone (Layer 0 today)": 321,
+   "the resolution-2 cell": 458,
+   "tree, memory 3 days": 385,
+   "tree, memory 30 days": 430,
+   "tree, memory all": 452
+  }
+ }
+}

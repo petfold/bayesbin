@@ -261,6 +261,29 @@ claim(cls["busy"]["variants"][RES2]["log_score_per_cell_day"] < -1, "streaming: 
 claim(gain[TREE] > max(gain[RES2], gain["tree, memory 30 days"], gain["tree, memory all"]) > 0,
       "streaming: the tree with a 3-day forgetting time scores best")
 claim(big["in_window"][TREE] > big["in_window"][ALONE], "streaming: more large quakes alarm in their window pooled")
+if (DATA / "stream_emsc.json").exists():  # the same replay on the EMSC catalogue
+    se = read_json("stream_emsc.json")
+    ce = se["classes"]
+    m("emscCells", num(se["cells"]))
+    m("emscEvents", num(se["events"]))
+    m("emscGain", num(se["log_score_gain"][TREE]))
+    m("emscBusySelf", pct(ce["busy"]["weight_by_res"][3]))
+    m("emscBusyTailResTwo", f"{1000 * ce['busy']['variants'][RES2]['p999']:.2f}")
+    for key in ("sparse", "rare"):
+        cap = key.capitalize()
+        m(f"emsc{cap}TailAlone", f"{1000 * ce[key]['variants'][ALONE]['p999']:.2f}")
+        m(f"emsc{cap}TailTree", f"{1000 * ce[key]['variants'][TREE]['p999']:.2f}")
+        v = ce[key]["variants"]
+        claim(v[ALONE]["p999"] < 0.0007 and 0.00085 < v[TREE]["p999"] < 0.00115,
+              f"streaming, EMSC {key} cells: alone the upper tail is too thin, pooled it is nominal")
+    be = se["big"]
+    m("emscBigQuakes", num(be["quakes"]))
+    m("emscBigAlonePct", pct(be["in_window"][ALONE] / be["quakes"]))
+    m("emscBigTreePct", pct(be["in_window"][TREE] / be["quakes"]))
+    claim(ce["busy"]["weight_by_res"][3] > 0.9, "streaming, EMSC: busy cells keep most of the weight on themselves")
+    claim(se["log_score_gain"][TREE] > max(se["log_score_gain"][RES2], se["log_score_gain"]["tree, memory 30 days"]) > 0,
+          "streaming, EMSC: the tree with a 3-day forgetting time scores best")
+    claim(be["in_window"][TREE] > be["in_window"][ALONE], "streaming, EMSC: more large quakes alarm in their window pooled")
 
 # --- write ----------------------------------------------------------------------------------------
 with open(DATA / "numbers.tex", "w") as f:

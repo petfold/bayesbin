@@ -609,9 +609,15 @@ tail. Over all cells the log predictive score of the record rises by \streamGain
 (\streamGainResTwo\ for the fixed resolution-2 bins; \streamGainMonth\ and \streamGainAll\ with a
 forgetting time of 30 days or none). Of the \streamBigQuakes\ quakes of magnitude 5 or more,
 \streamBigTree\ alarm in their own cell and window against \streamBigAlone\ alone, and alarms over
-all cells rise from \streamAlarmsAlone\ to \streamAlarmsTree\ a day, mostly calibration restored. Each
-window costs one vectorised step of every node's model and one pass of the recursion; Worldwatch's
-live scoring has adopted this pooling.
+all cells rise from \streamAlarmsAlone\ to \streamAlarmsTree\ a day, mostly calibration restored. The same
+replay on a second catalogue, the European--Mediterranean Seismological Centre's (\emscEvents\
+events in \emscCells\ cells, more of them outside the United States), gives the same picture: sparse
+and rare cells' tails from \emscSparseTailAlone\ and \emscRareTailAlone\ to \emscSparseTailTree\ and
+\emscRareTailTree\ per thousand, busy cells keeping \emscBusySelf\ of the weight on themselves (a
+fixed resolution-2 bin takes their tail to \emscBusyTailResTwo\ per thousand), the record's log score up by
+\emscGain\ nats, and \emscBigTreePct\ of its \emscBigQuakes\ quakes of magnitude 5 or more alarmed in
+their window against \emscBigAlonePct\ alone. Each window costs one vectorised step of every node's
+model and one pass of the recursion; Worldwatch's live scoring has adopted this pooling.
 
 \begin{table}[t]
 \centering\small

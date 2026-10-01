@@ -22,7 +22,7 @@ The pipeline reads the events where Worldwatch keeps them; set these to point el
 |---|---|---|
 | `WW_ARCHIVE` | `~/worldwatch-archive` | Worldwatch's Parquet archive (the daily backup, `worldwatch-pull`); news events are the `gdelt_events` stream of its `bins` table |
 | `WW_USGS` | `~/.cache/worldwatch-research/usgs` | the USGS catalogue as CSV (Worldwatch's `research/replay_changepoint/fetch_usgs.py START END`) |
-| `WW_RESEARCH` | `~/.cache/worldwatch-research` | Worldwatch's research results: the streaming replay's `tree_layer0.npz` (its `research/replay_changepoint/tree_layer0.py`, ~20 min on 4 cores) |
+| `WW_RESEARCH` | `~/.cache/worldwatch-research` | Worldwatch's research results: the streaming replay's `tree_layer0.npz` (its `research/replay_changepoint/tree_layer0.py`, ~20 min on 4 cores) and, if there, `tree_layer0_emsc.npz` (the same on the EMSC catalogue: `TREE_CATALOGUE=emsc`) |
 | `TWOD_RES` | `3` | the finest H3 resolution (news cells cannot be finer than the archive's, resolution 3) |
 | `TWOD_QUICK` | unset | `1`: smaller prototype sizes, for a fast check |
 

@@ -6,7 +6,9 @@ The replay is Worldwatch's research/replay_changepoint/tree_layer0.py: the USGS 
 Worldwatch's count model (a discounted Gamma-Poisson with a grid of burst factors) on its region's
 counts, the nodes' log predictive scores summed with a forgetting time, the tree recursion after
 every window, every cell with events scored. It saves its per-cell tallies to tree_layer0.npz in
-WW_RESEARCH (default ~/.cache/worldwatch-research); this script only reads them (seconds).
+WW_RESEARCH (default ~/.cache/worldwatch-research); this script only reads them (seconds). The
+same replay on the EMSC catalogue (TREE_CATALOGUE=emsc, tree_layer0_emsc.npz), when there, goes to
+data/stream_emsc.json.
 """
 
 import json
@@ -29,6 +31,13 @@ def main():
     path = RESEARCH / "tree_layer0.npz"
     if not path.exists():
         raise SystemExit(f"{path} not found: run Worldwatch's research/replay_changepoint/tree_layer0.py first")
+    summarise(path, DATA / "stream.json")
+    emsc = RESEARCH / "tree_layer0_emsc.npz"  # the EMSC catalogue (TREE_CATALOGUE=emsc), if replayed
+    if emsc.exists():
+        summarise(emsc, DATA / "stream_emsc.json")
+
+
+def summarise(path, out_path):
     R = np.load(path, allow_pickle=True)
     variants = [str(v) for v in R["variants"]]
     names, events = [str(x) for x in R["names"]], R["events"]
@@ -66,10 +75,10 @@ def main():
                                   for v, name in enumerate(variants)}}
     for k in (ALONE, RES2, TREE):
         assert k in variants, k
-    with open(DATA / "stream.json", "w") as f:
+    with open(out_path, "w") as f:
         json.dump(out, f, indent=1)
     c = out["classes"]
-    print(f"{out['cells']} cells, {days:.0f} days: P(q > 0.999) in sparse cells {c['sparse']['variants'][ALONE]['p999']:.5f} "
+    print(f"{path.name}: {out['cells']} cells, {days:.0f} days: P(q > 0.999) in sparse cells {c['sparse']['variants'][ALONE]['p999']:.5f} "
           f"alone, {c['sparse']['variants'][TREE]['p999']:.5f} pooled; log score {out['log_score_gain'][TREE]:+.0f} nats")
 
 
