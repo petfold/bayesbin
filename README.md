@@ -124,7 +124,7 @@ For data that arrive over time, with the same two likelihoods:
 | class | prior over segmentations | gives | cost per new interval |
 |---|---|---|---|
 | `OnlineBinning` | as `fit`: up to `max_boundaries` boundaries | exactly what `fit` gives for the latest interval, the next count's predictive; `fit()` for the past | grows with the data so far |
-| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT | grows with the log of the current segment (old run lengths merged) |
+| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` (or learnt: `hazard_strength`) | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT, `hazard_posterior()` | grows with the log of the current segment (old run lengths merged); about 2x with a learnt hazard |
 | `ChangePointStream.overdispersed` (a `ChangePointMixture`) | the same, with negative binomial segments over a grid of dispersions | the same, for bursty counts; `dispersion_posterior()` | about 10x the above |
 
 ## The C++ version: binsdfc-fb
@@ -215,9 +215,8 @@ the PyPI package. Timings against bayesbin are in the tables below.
   which bounds its state at a cost of at most 3·10⁻⁴ (relative, in the sd;
   10⁻⁵ in the rate, typically less) in its answers; `merge_bins=None`
   keeps every run. `OnlineBinning`'s cost per interval grows with the data so far.
-- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): a hazard learnt from
-  the data, cyclic profiles (a bin may wrap round the end of a day or week), 2-D
-  via recursive partitions.
+- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): cyclic profiles (a
+  bin may wrap round the end of a day or week), 2-D via recursive partitions.
 
 ## Speed against the original
 

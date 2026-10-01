@@ -11,6 +11,15 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- A hazard learnt from the data: `hazard_strength=a` (any `ChangePointStream`,
+  and `.overdispersed`) puts a Beta(a, a(L - 1)) prior on the hazard (mean
+  1/L, L = `expected_run_length`), and the recursion runs exactly over the
+  joint of the run length and the number of change points so far.
+  `hazard_posterior()` gives its posterior mean and sd. Exact against
+  enumerating every segmentation; a strong prior equals the fixed hazard;
+  segments of mean length 40 under a prior centred on 1/1000: 0.0239 ± 0.0025.
+  About twice the fixed hazard's cost per interval. The fixed hazard is
+  unchanged (bit for bit).
 - `ChangePointStream` is 3-4x faster per `update()` and 2-4x per `pit()` then
   `update()` (i7-3612QM: 170 µs an update with ~250 components, was 540). The
   state is kept in decreasing run length, so the runs of a bucket are

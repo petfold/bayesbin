@@ -481,7 +481,10 @@ costs about ten times as much per count.
 
 **Choosing `expected_run_length`**: how long, on average, you expect a rate to
 last. It sets how readily the model believes in a change; the results are not
-very sensitive to it within a factor of a few. **The prior** (`alpha`, `beta`,
+very sensitive to it within a factor of a few. If you do not know it, let the
+stream learn it: `hazard_strength=1.0` makes it a prior guess worth one change
+point, which the data soon outweigh (`hazard_posterior()` gives the learnt rate
+of changes, 1/its mean the expected segment length), at about twice the cost. **The prior** (`alpha`, `beta`,
 or `sigma`, `gamma` for success rates) should cover the rates you expect: a new
 segment's rate is drawn from it.
 

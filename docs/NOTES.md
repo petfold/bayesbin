@@ -31,9 +31,14 @@
    a component; for Beta posteriors the cdf comes from the ratios of successive
    pmf terms instead (a cdf by ratios cost as much as betainc for Poisson).
    The remaining error is gammaln(x + A) - gammaln(A), ~1e-10 at A ~ 1e4 (a
-   rising product would be exact to 1e-15, but costs more NumPy calls). Left:
-   a hazard learnt from the data (a Beta prior on it), fixed-lag smoothing,
-   fused (numba) kernels for the updates and the cdf.
+   rising product would be exact to 1e-15, but costs more NumPy calls). The
+   hazard can be learnt (2026-10-02: `hazard_strength`, a Beta prior on it),
+   exactly, over the joint of the run length and the number of change points
+   c so far (Wilson, Nassar & Gold 2010); c's posterior is narrow (a few dozen
+   values above `prune` after 125 changes), and held as probabilities, not
+   logs, it costs no exp per entry: about twice the fixed hazard per
+   interval (in logs it was ten times). Left: fixed-lag smoothing, fused
+   (numba) kernels for the updates and the cdf.
 3. **Cyclic profiles**: a bin may wrap round the end of a day or week.
 4. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.

@@ -23,15 +23,22 @@ def _segment_logev(kind, x, n, prior):
             + betaln(S + p, F + q) - betaln(p, q))
 
 
-def _enumerate(kind, x, n, prior, h):
-    """(log P(x), {run length: P}, E[rate now]) over all 2^(T-1) segmentations."""
+def _enumerate(kind, x, n, prior, h, hazard_prior=None):
+    """(log P(x), {run length: P}, E[rate now]) over all 2^(T-1) segmentations; with
+    hazard_prior = (a, b), h ~ Beta(a, b) instead of fixed, and E[h | x] as well."""
     T = len(x)
     p, q = prior
-    terms, runs, rates = [], {}, []
+    terms, runs, rates, hazards = [], {}, [], []
     for bits in itertools.product([0, 1], repeat=T - 1):
         starts = [0] + [i + 1 for i, b in enumerate(bits) if b]
         ends = starts[1:] + [T]
-        lp = sum(bits) * np.log(h) + (T - 1 - sum(bits)) * np.log1p(-h)
+        c = sum(bits)
+        if hazard_prior is None:
+            lp = c * np.log(h) + (T - 1 - c) * np.log1p(-h)
+        else:
+            ha, hb = hazard_prior
+            lp = betaln(ha + c, hb + T - 1 - c) - betaln(ha, hb)
+            hazards.append((ha + c) / (ha + hb + T - 1))
         lp += sum(_segment_logev(kind, x[a:b], n[a:b], prior) for a, b in zip(starts, ends))
         terms.append(lp)
         runs.setdefault(T - starts[-1], []).append(lp)
@@ -41,7 +48,8 @@ def _enumerate(kind, x, n, prior, h):
         rates.append(A / (A + B) if kind == "bernoulli" else A / B)
     z = logsumexp(terms)
     w = np.exp(np.array(terms) - z)
-    return z, {k: float(np.exp(logsumexp(v) - z)) for k, v in runs.items()}, float(w @ np.array(rates))
+    out = z, {k: float(np.exp(logsumexp(v) - z)) for k, v in runs.items()}, float(w @ np.array(rates))
+    return out if hazard_prior is None else (*out, float(w @ np.array(hazards)))
 
 
 def _small(kind, seed=0, T=9):
@@ -67,6 +75,63 @@ def test_stream_is_exact_against_enumerating_every_segmentation(kind):
         for k, p in zip(lengths, probs):
             assert p == pytest.approx(runs[int(k)], abs=1e-13)
         assert cp.rate_now()[0] == pytest.approx(rate, rel=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["poisson", "bernoulli"])
+def test_a_learnt_hazard_is_exact_against_enumerating_every_segmentation(kind):
+    """h ~ Beta(a, b): each segmentation weighs B(a + c, b + T - 1 - c) / B(a, b) for its c
+    change points; the stream tracks (run length, c) jointly."""
+    x, n, _ = _small(kind)
+    kw = dict(expected_run_length=4, prune=0, hazard_strength=0.7)
+    cp = (ChangePointStream.poisson(1.5, 0.5, **kw) if kind == "poisson"
+          else ChangePointStream.bernoulli(sigma=1.0, gamma=2.0, **kw))
+    assert cp.hazard_posterior()[0] == pytest.approx(0.25)
+    for T in range(1, len(x) + 1):
+        cp.update(x[T - 1], n[T - 1])
+        z, runs, rate, hazard = _enumerate(kind, x[:T], n[:T], cp.prior, None, hazard_prior=(0.7, 2.1))
+        assert cp.log_marginal == pytest.approx(z, rel=1e-13, abs=1e-12)
+        lengths, probs = cp.run_length_posterior()
+        assert {int(k) for k in lengths} == set(runs)
+        for k, p in zip(lengths, probs):
+            assert p == pytest.approx(runs[int(k)], abs=1e-13)
+        assert cp.rate_now()[0] == pytest.approx(rate, rel=1e-12)
+        assert cp.hazard_posterior()[0] == pytest.approx(hazard, rel=1e-12)
+
+
+def test_a_strong_hazard_prior_is_the_fixed_hazard():
+    rng = np.random.default_rng(9)
+    y = np.concatenate([rng.poisson(lam, 150) for lam in (2, 7, 3, 12)]).astype(float)
+    fixed = ChangePointStream.poisson(1.0, 0.25, expected_run_length=50)
+    strong = ChangePointStream.poisson(1.0, 0.25, expected_run_length=50, hazard_strength=1e9)
+    for yt in y:
+        assert strong.pit(yt, u=0.3) == pytest.approx(fixed.pit(yt, u=0.3), abs=1e-6)
+        fixed.update(yt)
+        strong.update(yt)
+    assert strong.log_marginal == pytest.approx(fixed.log_marginal, rel=1e-7)
+    assert strong.hazard_posterior()[0] == pytest.approx(1 / 50, rel=1e-6)
+    assert strong.rate_now()[0] == pytest.approx(fixed.rate_now()[0], rel=1e-6)
+
+
+def test_the_hazard_is_learnt_from_the_data():
+    """Segments of geometric length (mean 40, a hazard of 1/40) and rates from the prior: a weak
+    prior centred on 1/1000 finds 1/40, predicts better than the fixed 1/1000, and keeps its
+    state bounded (the number of change points is known to within a few dozen)."""
+    rng = np.random.default_rng(8)
+    y = []
+    while len(y) < 5000:
+        y.extend(rng.poisson(rng.gamma(2.0, 2.0), rng.geometric(1 / 40)))
+    y = np.array(y[:5000], float)
+    wrong = ChangePointStream.poisson(2.0, 0.5, expected_run_length=1000)
+    learnt = ChangePointStream.poisson(2.0, 0.5, expected_run_length=1000, hazard_strength=1.0)
+    widest = 0
+    for yt in y:
+        wrong.update(yt)
+        learnt.update(yt)
+        widest = max(widest, learnt._p2.shape[1])
+    mean, sd = learnt.hazard_posterior()
+    assert abs(mean - 1 / 40) < 3 * sd and sd < 0.3 * mean, (mean, sd)
+    assert learnt.log_marginal > wrong.log_marginal + 20
+    assert widest < 120, widest
 
 
 def test_negbinomial_stream_is_exact_against_enumeration():
