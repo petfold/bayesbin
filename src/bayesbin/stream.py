@@ -50,11 +50,15 @@ trials, without it); Poisson ones include 1/y!.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from scipy.special import betainc, betaln, gammaln, xlogy
 
 _NEG_INF = -np.inf
+_ZERO, _ZERO_INT = np.zeros(1), np.zeros(1, np.int64)
 _NEGLIGIBLE = 1e-16  # predictive components lighter than this (of the total) are left out of cdfs
+_TERMS = 64  # cdfs up to counts below this sum the pmf's terms (by their ratios)
 # the dispersions an overdispersed stream averages over (the negative binomial size per unit
 # exposure; inf: Poisson), as Worldwatch's Layer-0 count model's grid
 DISPERSIONS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, np.inf)
@@ -62,11 +66,14 @@ DISPERSIONS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, np.inf)
 
 def _lse(a: np.ndarray, axis: int | None = None):
     """log Σ exp(a), plain NumPy (scipy's version costs ~0.3 ms a call on small arrays)."""
+    if axis is None:  # the common case, in as few NumPy calls as possible
+        top = float(a.max())
+        return top + math.log(float(np.exp(a - top).sum())) if math.isfinite(top) else top
     m = np.max(a, axis=axis, keepdims=True)
     m = np.where(np.isfinite(m), m, 0.0)
     with np.errstate(divide="ignore"):
         out = np.log(np.sum(np.exp(a - m), axis=axis, keepdims=True)) + m
-    return out.item() if axis is None else np.squeeze(out, axis)
+    return np.squeeze(out, axis)
 
 
 class ChangePointStream:
@@ -92,6 +99,8 @@ class ChangePointStream:
         self.hazard = 1.0 / expected_run_length
         self._log_h = np.log(self.hazard)
         self._log_1mh = np.log1p(-self.hazard) if self.hazard < 1 else _NEG_INF
+        self._log_h_arr = np.array([self._log_h])
+        self._log_prune = np.log(prune) if prune > 0 else _NEG_INF
         self.T = 0
         self.log_marginal = 0.0  # log P(all counts so far): the sum of the log predictives
         # the runs: log posterior, the range of lengths each stands for (lo == hi unless merged),
@@ -102,6 +111,7 @@ class ChangePointStream:
         self._u = np.zeros(0)
         self._v = np.zeros(0)
         self._cache = None  # (T, x, size, per-component log pmf of x): pit() then update() on x
+        self._comp = None  # (T, the components): pit() then update()
 
     @classmethod
     def bernoulli(cls, expected_run_length: float, sigma: float = 1.0, gamma: float = 1.0,
@@ -146,10 +156,15 @@ class ChangePointStream:
     def _components(self):
         """(log weights, u, v): the next interval's bin continues each run (weight
         P(run) (1 - h)) or starts a new segment (weight h, the prior: u = v = 0)."""
+        if self._comp is not None and self._comp[0] == self.T:
+            return self._comp[1]
         if self.T == 0:
-            return np.zeros(1), np.zeros(1), np.zeros(1)
-        return (np.append(self._logp + self._log_1mh, self._log_h),
-                np.append(self._u, 0.0), np.append(self._v, 0.0))
+            comp = np.zeros(1), np.zeros(1), np.zeros(1)
+        else:
+            comp = (np.concatenate((self._logp + self._log_1mh, self._log_h_arr)),
+                    np.concatenate((self._u, _ZERO)), np.concatenate((self._v, _ZERO)))
+        self._comp = (self.T, comp)
+        return comp
 
     def _logpmf(self, x, size, u, v):
         """log P(x | a segment with totals u, v so far), for arrays u, v (rows) and x (columns)."""
@@ -170,17 +185,41 @@ class ChangePointStream:
             lp = (gammaln(n + x) - gammaln(n) - gammaln(x + 1)
                   + betaln(A + n, B + x) - betaln(A, B))
             return np.where((x >= 0) & (x == np.floor(x)), lp, _NEG_INF)
-        # Gamma-Poisson: negative binomial over exposure e
+        # Gamma-Poisson: negative binomial over exposure e (log1p: log(B / (B + e)) loses
+        # ~1e-16 B/e of its value, which A multiplies)
         lp = (gammaln(x + A) - gammaln(A) - gammaln(x + 1)
-              + A * np.log(B / (B + e)) + xlogy(x, e / (B + e)))
+              - A * np.log1p(e / B) + xlogy(x, e / (B + e)))
         return np.where((x >= 0) & (x == np.floor(x)), lp, _NEG_INF)
+
+    def _logpmf1(self, x: float, size: float, u, v) -> np.ndarray:
+        """_logpmf for one count: a 1-D array over the segments, by the same arithmetic in
+        fewer NumPy calls (one interval at a time is the common case)."""
+        p, q = self.prior
+        A, B = u + p, v + q
+        if not (x >= 0 and float(x).is_integer() and (self.kind != "bernoulli" or x <= size)):
+            return np.full(len(A), _NEG_INF)
+        if self.kind == "bernoulli":
+            n = size
+            return (gammaln(n + 1) - gammaln(x + 1) - gammaln(n - x + 1)
+                    + betaln(x + A, n - x + B) - betaln(A, B))
+        e = size
+        if self.kind == "negbin":
+            n = self.dispersion * e
+            if n == 0:
+                return np.full(len(A), 0.0 if x == 0 else _NEG_INF)
+            return (gammaln(n + x) - gammaln(n) - gammaln(x + 1)
+                    + betaln(A + n, B + x) - betaln(A, B))
+        if x == 0:  # the general formula's other terms are exactly 0 here
+            return -A * np.log1p(e / B)
+        return (gammaln(x + A) - gammaln(A) - gammaln(x + 1)
+                - A * np.log1p(e / B) + xlogy(x, e / (B + e)))
 
     def _component_logpmf(self, x: float, size: float, lw, u, v) -> np.ndarray:
         """Each component's log pmf of the single count x, kept for update(x) after pit(x)."""
         c = self._cache
         if c is not None and c[0] == self.T and c[1] == x and c[2] == size:
             return c[3]
-        lp = self._logpmf([x], size, u, v)[:, 0]
+        lp = self._logpmf1(x, size, u, v)
         self._cache = (self.T, x, size, lp)
         return lp
 
@@ -200,21 +239,49 @@ class ChangePointStream:
     def next_cdf(self, x, size: float | None = None) -> np.ndarray:
         """P(the next interval's count <= x | data so far)."""
         size = self._size(size)
-        x = np.atleast_1d(np.asarray(x, float))
+        k = np.floor(np.atleast_1d(np.asarray(x, float)))
+        top = int(max(k.max(), -1))
+        if top < 0:
+            return np.zeros(len(k))
+        lw, u, v = self._components()
+        w = np.exp(lw - _lse(lw))
+        big = w > _NEGLIGIBLE  # the rest change the cdf by < 1e-16 each
+        w, A, B = w[big], u[big] + self.prior[0], v[big] + self.prior[1]
+        if self.kind != "poisson" and top < _TERMS:  # (for Poisson betainc is as fast)
+            t = self._pmf_terms(top, size, A, B)
+            if t is not None:
+                c = np.cumsum(t, axis=1)
+                return np.where(k < 0, 0.0, w @ c[:, np.clip(k, 0, c.shape[1] - 1).astype(int)])
         if self.kind == "poisson":  # negative binomial cdf in closed form: I_p(A, k + 1)
-            lw, u, v = self._components()
-            w = np.exp(lw - _lse(lw))
-            big = w > _NEGLIGIBLE  # the rest change the cdf by < 1e-16 each
-            w, A, B = w[big], u[big] + self.prior[0], v[big] + self.prior[1]
-            k = np.floor(x)
             c = betainc(A[:, None], np.maximum(k, 0)[None, :] + 1, (B / (B + size))[:, None])
             return np.where(k < 0, 0.0, w @ c)
-        top = int(max(np.floor(x.max()), -1))
-        if top < 0:
-            return np.zeros(len(x))
         c = np.cumsum(self.next_pmf(np.arange(top + 1), size))
-        idx = np.floor(x).astype(int)
-        return np.where(idx < 0, 0.0, c[np.clip(idx, 0, top)])
+        return np.where(k < 0, 0.0, c[np.clip(k, 0, top).astype(int)])
+
+    def _pmf_terms(self, top: int, size: float, A, B):
+        """P(count = 0..top | each segment) of a Beta posterior (negbin, Bernoulli): the first
+        term, then the ratios of successive ones (no betaln per count). None if a first term
+        is below ~1e-304: the cdf then sums the predictive pmf."""
+        j = np.arange(top, dtype=float)
+        if self.kind == "negbin":  # beta-negative-binomial: NB(n, p), p ~ Beta(A, B)
+            n = self.dispersion * size
+            log0 = betaln(A + n, B) - betaln(A, B)
+            ratio = (n + j) * (B[:, None] + j) / ((j + 1) * ((A + B + n)[:, None] + j))
+        else:  # beta-binomial over n trials: none beyond n
+            if not float(size).is_integer():
+                return None
+            n = int(size)
+            top = min(top, n)
+            j = j[:top]
+            log0 = betaln(A, B + n) - betaln(A, B)
+            ratio = (n - j) * (A[:, None] + j) / ((j + 1) * ((B + n - 1)[:, None] - j))
+        if not log0.min() > -700:
+            return None
+        t = np.empty((len(A), top + 1))
+        t[:, 0] = np.exp(log0)
+        np.cumprod(ratio, axis=1, out=t[:, 1:])
+        t[:, 1:] *= t[:, :1]
+        return t
 
     def pit(self, x: float, size: float | None = None, u: float | None = None,
             rng: np.random.Generator | None = None) -> float:
@@ -238,24 +305,28 @@ class ChangePointStream:
     def update(self, x, size=None) -> None:
         """Add one interval or several (arrays), in order. Bernoulli: update(s, n), s events
         among n trials; Poisson: update(y) or update(y, e)."""
-        x = np.atleast_1d(np.asarray(x, float))
         if self.kind == "bernoulli" and size is None:
             raise ValueError("Bernoulli: update(s, n)")
-        size = np.broadcast_to(np.asarray(1.0 if size is None else size, float), x.shape)
-        if (x < 0).any() or (size < 0).any() or (x != np.floor(x)).any():
-            raise ValueError("counts must be non-negative integers (and sizes non-negative)")
-        if self.kind == "bernoulli" and (x > size).any():
-            raise ValueError("more events than trials")
-        if self.kind != "bernoulli" and ((size == 0) & (x > 0)).any():
-            raise ValueError("an interval with zero exposure cannot have events")
-        for xi, si in zip(x, size):
+        if np.isscalar(x) and (size is None or np.isscalar(size)):  # one interval
+            xs, ss = [float(x)], [1.0 if size is None else float(size)]
+        else:
+            xs = np.atleast_1d(np.asarray(x, float))
+            ss = np.broadcast_to(np.asarray(1.0 if size is None else size, float), xs.shape)
+        for xi, si in zip(xs, ss):  # every interval checked before any is added
+            if not (xi >= 0 and si >= 0 and float(xi).is_integer()):
+                raise ValueError("counts must be non-negative integers (and sizes non-negative)")
+            if self.kind == "bernoulli" and xi > si:
+                raise ValueError("more events than trials")
+            if self.kind != "bernoulli" and si == 0 and xi > 0:
+                raise ValueError("an interval with zero exposure cannot have events")
+        for xi, si in zip(xs, ss):
             self._add(float(xi), float(si))
 
     def _add(self, x: float, size: float) -> None:
         lw, u, v = self._components()
         lp = lw + self._component_logpmf(x, size, lw, u, v)
         step = _lse(lp)  # log P(x | data so far)
-        self.log_marginal += float(step)
+        self.log_marginal += step
         lp -= step
         if self.kind == "bernoulli":
             du, dv = x, size - x
@@ -263,72 +334,80 @@ class ChangePointStream:
             du, dv = self.dispersion * size, x
         else:
             du, dv = x, size
-        if self.T == 0:
-            logp, lo, hi = lp[-1:], np.ones(1, np.int64), np.ones(1, np.int64)
-            uu, vv = np.array([du]), np.array([dv])
-        else:  # the runs extended by one, then the new segment (length 1)
-            logp = lp
-            lo, hi = np.append(self._lo + 1, 1), np.append(self._hi + 1, 1)
-            uu = np.append(self._u + du, du)
-            vv = np.append(self._v + dv, dv)
-        keep = logp >= np.log(self.prune) if self.prune > 0 else np.isfinite(logp)
-        keep[np.argmax(logp)] = True
-        if self.max_runs is not None and keep.sum() > self.max_runs:
-            keep = np.zeros_like(keep)
-            keep[np.argsort(logp)[-self.max_runs:]] = True
-        logp = logp[keep]
-        self._logp = logp - _lse(logp)  # renormalised after pruning
-        self._lo, self._hi, self._u, self._v = lo[keep], hi[keep], uu[keep], vv[keep]
+        # the runs extended by one, then the new segment (length 1): the state is kept in
+        # decreasing run length
+        lo = np.concatenate((self._lo, _ZERO_INT)) + 1
+        hi = np.concatenate((self._hi, _ZERO_INT)) + 1
+        u, v = u + du, v + dv
+        keep = lp >= self._log_prune if self.prune > 0 else np.isfinite(lp)
+        if keep.all() and (self.max_runs is None or len(lp) <= self.max_runs):
+            self._logp, self._lo, self._hi, self._u, self._v = lp, lo, hi, u, v
+        else:
+            keep[np.argmax(lp)] = True
+            if self.max_runs is not None and keep.sum() > self.max_runs:
+                keep = np.zeros_like(keep)
+                keep[np.argsort(lp)[-self.max_runs:]] = True
+            lp = lp[keep]
+            self._logp = lp - _lse(lp)  # renormalised after pruning
+            self._lo, self._hi, self._u, self._v = lo[keep], hi[keep], u[keep], v[keep]
         if self.merge_bins is not None:
             self._merge()
         self.T += 1
 
     def _merge(self) -> None:
-        """Merge the runs longer than exact_recent that share a bucket of log length."""
-        old = np.flatnonzero(self._lo > self.exact_recent)
-        if len(old) < 2:
+        """Merge the runs longer than exact_recent that share a bucket of log length. The state
+        is in decreasing length, so these runs come first and a bucket's are neighbours."""
+        n = int(np.count_nonzero(self._lo > self.exact_recent))
+        if n < 2:
             return
         # a component's bucket is that of its longest run, which ages by one each interval
         # (by its shortest, a merged component would stay put and absorb every run after it)
-        bucket = np.floor(np.log2(self._hi[old]) * self.merge_bins).astype(np.int64)
-        keys, inv, counts = np.unique(bucket, return_inverse=True, return_counts=True)
-        if (counts < 2).all():
+        bucket = np.floor(np.log2(self._hi[:n]) * self.merge_bins)
+        same = np.flatnonzero(bucket[1:] == bucket[:-1])  # i and i + 1 share a bucket
+        if not len(same):
             return
-        drop = np.zeros(len(self._logp), bool)
-        new = []
-        for g in np.flatnonzero(counts > 1):
-            idx = old[inv == g]
-            merged = self._moment_match(idx)
-            if merged is not None:
-                drop[idx] = True
-                new.append(merged)
-        if not new:
-            return
-        keep = ~drop
-        lp, lo, hi, u, v = (np.array(c) for c in zip(*new))
-        self._logp = np.append(self._logp[keep], lp)
-        self._lo = np.append(self._lo[keep], lo.astype(np.int64))
-        self._hi = np.append(self._hi[keep], hi.astype(np.int64))
-        self._u, self._v = np.append(self._u[keep], u), np.append(self._v[keep], v)
+        groups: list[list[int]] = []  # [first, end) of each bucket with more than one
+        for i in same.tolist():
+            if groups and groups[-1][1] == i + 1:
+                groups[-1][1] = i + 2
+            else:
+                groups.append([i, i + 2])
+        keep = None
+        for a, b in groups:
+            merged = self._moment_match(a, b)
+            if merged is None:
+                continue
+            # the bucket's first (longest) component becomes the merged one
+            self._logp[a], self._u[a], self._v[a] = merged
+            self._lo[a] = self._lo[b - 1]
+            if keep is None:
+                keep = np.ones(len(self._logp), bool)
+            keep[a + 1:b] = False
+        if keep is not None:
+            self._logp, self._lo, self._hi = self._logp[keep], self._lo[keep], self._hi[keep]
+            self._u, self._v = self._u[keep], self._v[keep]
 
-    def _moment_match(self, idx: np.ndarray):
-        """(log p, lo, hi, u, v) of one component for the runs idx: their total probability and
-        the conjugate posterior with the mixture's rate mean and variance (variance in the
-        two-pass form); None if no valid one exists (a Beta mixture too spread out)."""
-        lw = self._logp[idx]
-        top = lw.max()
-        w = np.exp(lw - top)
-        W = w.sum()
+    def _moment_match(self, a: int, b: int):
+        """(log p, u, v) of one component for the runs a..b-1: their total probability and the
+        conjugate posterior with the mixture's rate mean and variance (variance in the two-pass
+        form); None if no valid one exists (a Beta mixture too spread out). In Python floats,
+        as a bucket holds a few runs."""
+        lw = self._logp[a:b].tolist()
+        top = max(lw)
+        w = [math.exp(x - top) for x in lw]
+        W = math.fsum(w)
         p, q = self.prior
-        A, B = self._u[idx] + p, self._v[idx] + q
+        A = [x + p for x in self._u[a:b].tolist()]
+        B = [x + q for x in self._v[a:b].tolist()]
         beta_family = self.kind in ("bernoulli", "negbin")  # a Beta posterior (of f, or of p)
         if beta_family:
-            n = A + B
-            m, s = A / n, A * B / (n**2 * (n + 1))
+            m = [x / (x + y) for x, y in zip(A, B)]
+            s = [x * y / ((x + y) ** 2 * (x + y + 1)) for x, y in zip(A, B)]
         else:
-            m, s = A / B, A / B**2
-        M = float(w @ m) / W
-        V = float(w @ (s + (m - M) ** 2)) / W
+            m = [x / y for x, y in zip(A, B)]
+            s = [x / y**2 for x, y in zip(A, B)]
+        M = math.fsum(wi * mi for wi, mi in zip(w, m)) / W
+        V = math.fsum(wi * (si + (mi - M) ** 2) for wi, si, mi in zip(w, s, m)) / W
         if not V > 0:
             return None
         if beta_family:
@@ -338,7 +417,7 @@ class ChangePointStream:
             A_, B_ = M * n_, (1 - M) * n_
         else:
             A_, B_ = M * M / V, M / V
-        return (top + np.log(W), self._lo[idx].min(), self._hi[idx].max(), A_ - p, B_ - q)
+        return top + math.log(W), A_ - p, B_ - q
 
     # --- the state -----------------------------------------------------------------
 

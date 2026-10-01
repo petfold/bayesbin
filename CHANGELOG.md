@@ -11,6 +11,16 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- `ChangePointStream` is 3-4x faster per `update()` and 2-4x per `pit()` then
+  `update()` (i7-3612QM: 170 µs an update with ~250 components, was 540). The
+  state is kept in decreasing run length, so the runs of a bucket are
+  neighbours and merging needs no sort; one count at a time has its own paths
+  (log-sum-exp, the pmf, the checks); the components are kept between `pit()`
+  and `update()`; Beta-posterior segments (negative binomial, Bernoulli) get
+  their cdf from the ratios of successive pmf terms. The Poisson pmf uses
+  `-A log1p(e/B)` for `A log(B/(B+e))`, which lost ~1e-16 B/e of its value
+  (2.5e-12 at B ~ 1e4; now 3e-15). Results agree with 0.3.0's to rounding:
+  the same components, log marginals within 7e-15 relative, PITs within 4e-10.
 
 ## 0.3.0 (2026-09-27)
 

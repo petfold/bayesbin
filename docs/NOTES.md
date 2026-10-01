@@ -20,9 +20,20 @@
    2e-6, 3e-5, 1e-6; with frequent changes in counts of ~500, 3e-6, 3e-4, 1e-5
    (16 per octave was 100x worse there). A trap on the way: bucketing a merged
    component by its *shortest* run keeps it in the first bucket, absorbing every
-   run after it (errors of 60% in the sd); by its longest run it ages. Left: a
-   hazard learnt from the data (a Beta prior on it), fixed-lag smoothing, the
-   fused kernels for the updates.
+   run after it (errors of 60% in the sd); by its longest run it ages. The
+   NumPy path was then made 3-4x faster per update (2026-10-02; ~250
+   components: 170 µs, was 540) by spending fewer NumPy calls, which cost 2-5 µs
+   each on this laptop whatever their size: the state kept in decreasing run
+   length (a bucket's runs are neighbours, so merging needs no sort, and a
+   bucket of two is moment-matched in Python floats), one-count paths for the
+   log-sum-exp, the pmf and the checks, and the components kept between pit()
+   and update(). pit() is now the larger part: Poisson's betainc costs ~0.5 µs
+   a component; for Beta posteriors the cdf comes from the ratios of successive
+   pmf terms instead (a cdf by ratios cost as much as betainc for Poisson).
+   The remaining error is gammaln(x + A) - gammaln(A), ~1e-10 at A ~ 1e4 (a
+   rising product would be exact to 1e-15, but costs more NumPy calls). Left:
+   a hazard learnt from the data (a Beta prior on it), fixed-lag smoothing,
+   fused (numba) kernels for the updates and the cdf.
 3. **Cyclic profiles**: a bin may wrap round the end of a day or week.
 4. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.

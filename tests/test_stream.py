@@ -238,6 +238,15 @@ def test_stream_predictive_pmf_and_cdf_agree():
     assert b.next_pmf(np.arange(21), 20).sum() == pytest.approx(1.0, abs=1e-10)
     q = cp.pit(7, 1.7, u=0.0)
     assert q == pytest.approx(float(cp.next_cdf(6, 1.7)[0]))
+    # the cdfs of Beta posteriors by the ratios of successive pmf terms (counts below 64),
+    # beyond the number of trials, and with no exposure
+    np.testing.assert_allclose(b.next_cdf(np.arange(-1, 25), 20),
+                               np.concatenate([[0.0], np.cumsum(b.next_pmf(np.arange(25), 20))]), atol=1e-10)
+    nb = ChangePointStream.negbinomial(1.0, 0.4, 1.5, expected_run_length=50)
+    nb.update(rng.negative_binomial(1.5, 0.3, 200))
+    for e in (1.0, 2.5, 0.0):
+        np.testing.assert_allclose(nb.next_cdf(np.arange(-1, 60), e),
+                                   np.concatenate([[0.0], np.cumsum(nb.next_pmf(np.arange(60), e))]), atol=1e-12)
 
 
 def test_stream_updates_in_chunks_equal_updates_one_at_a_time():
@@ -258,6 +267,11 @@ def test_stream_inputs_are_checked():
         ChangePointStream.poisson(1.0, 1.0, expected_run_length=0.5)
     with pytest.raises(ValueError):
         ChangePointStream.poisson(1.0, 1.0, 10).update([1.5])  # not a count
+    for bad in (1.5, -1, np.inf, np.nan):  # one interval at a time has its own checks
+        with pytest.raises(ValueError):
+            ChangePointStream.poisson(1.0, 1.0, 10).update(bad)
+    with pytest.raises(ValueError):
+        ChangePointStream.poisson(1.0, 1.0, 10).update(2, 0.0)  # events without exposure
     with pytest.raises(ValueError):
         ChangePointStream.bernoulli(10).update([3], [2])  # more events than trials
     with pytest.raises(ValueError):
