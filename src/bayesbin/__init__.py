@@ -8,6 +8,7 @@ from bayesbin.core import (
     bin_posterior_for_m,
     credible_m_range,
     fit,
+    fit_cyclic,
     spike_counts,
 )
 from bayesbin.online import OnlineBinning
@@ -24,6 +25,7 @@ __all__ = [
     "bin_posterior_for_m",
     "credible_m_range",
     "fit",
+    "fit_cyclic",
     "spike_counts",
 ]
 __version__ = "0.3.0"

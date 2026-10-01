@@ -379,6 +379,32 @@ The rate is per slot per day. This treats the days as independent repeats of
 one profile. If some days are unusual (holidays) or the level drifts over the
 weeks, fit the shape on a recent window and model the level separately.
 
+If the busy part of the day runs over midnight, the two ends of the fold are one
+stretch of the same rate, which a line cannot know. `fit_cyclic` puts the slots
+on a circle, where a bin may wrap round from the last slot to the first:
+
+```python
+from bayesbin import fit_cyclic
+
+rng = np.random.default_rng(7)
+hour = np.arange(24)
+night = (hour >= 21) | (hour < 3)                       # busy from 21:00 to 03:00
+counts = rng.poisson(np.where(night, 4.0, 1.0) * 30)    # 30 days, added up hour by hour
+model = PoissonModel.weak_prior(counts, np.full(24, 30))
+ring, line = fit_cyclic(model, max_boundaries=6), fit(model, max_boundaries=6)
+print(ring.rate[[0, 12, 23]].round(2), line.rate[[0, 12, 23]].round(2))   # [3.95 0.98 3.95] [4.05 0.98 3.84]
+print([(int(k), round(float(x), 2)) for k, x in enumerate(ring.boundary_posterior) if x > 0.5])
+# [(2, 1.0), (20, 1.0)]: bins end at 02:00 and 20:00, none at midnight
+```
+
+On the circle the night is one bin, the same rate at 23:00 and 00:00 from both
+ends' data (sd 0.16, against 0.22 and 0.26 on the line), and the evidence
+prefers it (`log_marginal` 2.7 nats higher). `boundary_posterior` has an entry
+for every slot, the last for the gap between the last slot and the first. A
+single boundary on a circle is no partition, so M = 1 has evidence 0. The cost
+is one linear fit per slot: fold to coarse slots first (a day of hours takes
+0.1 s, a week of hours a few seconds).
+
 ## 10. Tutorial 5: data that arrive one at a time
 
 For a live stream — a sensor, a log, a feed — `OnlineBinning` keeps the

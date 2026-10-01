@@ -91,7 +91,8 @@ widths by hand:
 - **Change points**: `boundary_posterior` is the posterior probability that the
   rate changes after each interval, averaged over every segmentation.
 - **Periodic profiles**: daily or weekly shapes, with the days (or weeks) as
-  trials and the time of day as the axis.
+  trials and the time of day as the axis; `fit_cyclic` lets a bin wrap round
+  the end of the period (the night across midnight).
 - **Live streams**: the rate now, recent change points and a calibrated
   surprise score for each new count, as the data arrive (`OnlineBinning`,
   `ChangePointStream`).
@@ -215,8 +216,8 @@ the PyPI package. Timings against bayesbin are in the tables below.
   which bounds its state at a cost of at most 3·10⁻⁴ (relative, in the sd;
   10⁻⁵ in the rate, typically less) in its answers; `merge_bins=None`
   keeps every run. `OnlineBinning`'s cost per interval grows with the data so far.
-- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): cyclic profiles (a
-  bin may wrap round the end of a day or week), 2-D via recursive partitions.
+- Planned (see [docs/NOTES.md](https://github.com/petfold/bayesbin/blob/main/docs/NOTES.md#plan)): 2-D via recursive
+  partitions.
 
 ## Speed against the original
 

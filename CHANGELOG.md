@@ -11,6 +11,15 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- Cyclic profiles: `fit_cyclic(model, max_boundaries)` puts the intervals on
+  a circle (the hours of a day, the days of a week), so a bin may wrap round
+  from the last interval to the first. M boundaries make M bins (one bin for
+  M = 0; M = 1 is no partition), every placement equally likely. A partition
+  with M >= 2, rotated to start at one of its boundaries, is a linear one with
+  M - 1, so the evidence is the mean of the T rotations' linear evidences, and
+  the rates and boundary posterior average the rotations': T linear fits.
+  Exact against enumerating every circular partition; the same answers
+  wherever the cycle starts. User Guide: Tutorial 4.
 - A hazard learnt from the data: `hazard_strength=a` (any `ChangePointStream`,
   and `.overdispersed`) puts a Beta(a, a(L - 1)) prior on the hazard (mean
   1/L, L = `expected_run_length`), and the recursion runs exactly over the

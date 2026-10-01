@@ -39,7 +39,15 @@
    logs, it costs no exp per entry: about twice the fixed hazard per
    interval (in logs it was ten times). Left: fixed-lag smoothing, fused
    (numba) kernels for the updates and the cdf.
-3. **Cyclic profiles**: a bin may wrap round the end of a day or week.
+3. **Cyclic profiles** (2026-10-02): `fit_cyclic`, a bin may wrap round the
+   end of a day or week. A circular partition with M >= 2 boundaries is, from
+   each of its boundaries, a linear one with M - 1 of the rotated intervals:
+   Σ_circ = (1/M) Σ_s Λ_s(M - 1), and with C(T, M) placements the evidence is
+   the mean over the T rotations of the linear evidence of M - 1 (C(T, M) M / T
+   = C(T - 1, M - 1)). The rates and boundaries average the rotations' fits
+   with weights P(M | D) Λ_s / Σ_s' Λ_s'. T linear fits, O(M·T³): fine for a
+   day or a week of hours; minutes would need a direct circular recursion
+   (also O(M·T³), but without T separate passes' overheads).
 4. **Ports from binsdfc**: latency posteriors, signal separation levels,
    hyperparameter optimisation, boundary position posteriors for a fixed M.
 5. **2-D** (below: where the method stops being 1-D). Rows into bands, each
@@ -757,8 +765,8 @@ which can feed a forecast's predictive distribution. Caveats:
 - unfolded, a periodic series needs M to grow with its length (the same shape
   re-learnt every period; see the README's larger problems), so folding is
   also far cheaper;
-- a bin cannot yet wrap round the end of the period (planned: cyclic
-  profiles).
+- a bin may wrap round the end of the period with `fit_cyclic` (T linear
+  fits, so for coarse slots).
 
 Other directions: change points along long series, spatial rates over a
 hierarchical grid (hierarchies, above), mutual information between streams (the

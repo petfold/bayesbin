@@ -27,7 +27,7 @@ All arithmetic is in log space.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 
 import numpy as np
@@ -717,22 +717,96 @@ def fit(model, max_boundaries: int = 10, *, m_mass: float | None = None,
         use[lo:hi + 1] = True
     with np.errstate(divide="ignore"):
         log_c = np.where(use, np.log(post / post[use].sum()), _NEG_INF) - fwd[:, T - 1]
-    if full:
-        mean, second = model.bin_moments()
-        W = bin_posterior(L, fwd, bwd, log_c, exact=exact)
-        cover = _cover_sum(W)
-        rate = _cover_sum(W * np.nan_to_num(mean)) / cover
-        ef2 = _cover_sum(W * np.nan_to_num(second)) / cover
-        boundary = W[:, :-1].sum(axis=0)  # bins ending at b < T-1
-    else:
-        rate, ef2, boundary = _bin_sums(model, fwd, bwd, log_c)
-        W = None
+    rate, ef2, boundary, W = _moments(model, fwd, bwd, log_c, L if full else None, exact)
     # The moments are divided by the computed coverage (the posterior of the bins covering
     # each interval, 1 in exact arithmetic): its rounding error, 1e-11 on data whose
     # evidences span 1e5 nats, is the same factor in both moments, and var = E[f²] - E[f]²
     # would amplify it by rate²/var (1e-6 in the sd at rate 400 ± 1.6; 1e-10 normalised).
     var = np.clip(ef2 - rate**2, 0.0, None)
     return BinningResult(log_ev, post, rate, np.sqrt(var), boundary, W if keep_bins else None)
+
+
+def _passes(model, max_m: int, exact: bool):
+    """(fwd, bwd, L): the forward and backward programmes, and the T×T bin evidences for the
+    exact path (None otherwise: block by block from the model, O(T·M) memory)."""
+    if exact:
+        L = model.log_bin_evidence()
+        return _forward_exact(L, max_m), _backward(L, max_m, exact=True), L
+    return _forward(model, max_m), _backward(model, max_m), None
+
+
+def _moments(model, fwd, bwd, log_c, L, exact: bool):
+    """(E[f_k | D], E[f_k² | D], P(a bin ends at k | D) for k < T-1, the bin posterior or None)
+    for the model weights log_c, from the T×T bin posterior when L is given, else tile by tile."""
+    if L is None:
+        return (*_bin_sums(model, fwd, bwd, log_c), None)
+    mean, second = model.bin_moments()
+    W = bin_posterior(L, fwd, bwd, log_c, exact=exact)
+    cover = _cover_sum(W)
+    rate = _cover_sum(W * np.nan_to_num(mean)) / cover
+    ef2 = _cover_sum(W * np.nan_to_num(second)) / cover
+    return rate, ef2, W[:, :-1].sum(axis=0), W  # boundaries: bins ending at b < T-1
+
+
+def _rotated(model, s: int):
+    """The model with its intervals rotated to start at interval s."""
+    if isinstance(model, BernoulliModel):
+        return replace(model, s=np.roll(model.s, -s), g=np.roll(model.g, -s))
+    return replace(model, y=np.roll(model.y, -s), e=np.roll(model.e, -s))
+
+
+def fit_cyclic(model, max_boundaries: int = 10, *, exact: bool = False) -> BinningResult:
+    """Exact posterior over piecewise-constant rates on a cycle (the hours of a day, the days
+    of a week): the intervals are on a circle, and a bin may wrap round from the last to the
+    first. M boundaries on the circle make M bins (M >= 2) or one bin (M = 0; a single
+    boundary is no partition: its evidence is 0), each placement of M among the T gaps equally
+    likely, M uniform on 0..max_boundaries (at most T).
+
+    A partition with M >= 2 is, rotated to start at any one of its M boundaries, a linear one
+    with M - 1; so the evidence of M is the mean over the T rotations of fit's evidence of
+    M - 1, and the rates and boundary posterior average the rotations' with the posterior
+    weights of their partitions. T forward and backward passes: O(M·T³) in all.
+
+    boundary_posterior[k] = P(a bin ends at interval k | D) for k = 0..T-1 (k = T-1: between
+    the last interval and the first). `exact=True`: everything in plain log space, as in fit."""
+    T = model.T
+    max_m = min(max_boundaries, T)
+    if max_m < 2:  # one bin only
+        res = fit(model, 0, exact=exact)
+        log_ev = np.full(max_boundaries + 1, _NEG_INF)
+        log_ev[0] = res.log_evidence[0]
+        post = np.zeros(max_boundaries + 1)
+        post[0] = 1.0
+        return BinningResult(log_ev, post, res.rate, res.rate_std, np.zeros(T), None)
+    rots = [_rotated(model, s) for s in range(T)]
+    passes = [_passes(r, max_m - 1, exact) for r in rots]
+    lam = np.array([fwd[:, T - 1] for fwd, _, _ in passes])  # (T, max_m): log Σ over m-boundary partitions
+    const = model.log_data_constant()
+    log_ev = np.full(max_boundaries + 1, _NEG_INF)
+    log_ev[0] = lam[0, 0] + const
+    tot = logsumexp(lam, axis=0)  # over the rotations, for each m = M - 1
+    for M in range(2, max_m + 1):
+        log_ev[M] = tot[M - 1] - np.log(T) - _log_binom(T - 1, M - 1) + const
+    post = np.exp(log_ev - logsumexp(log_ev))
+    rate, ef2, boundary = np.zeros(T), np.zeros(T), np.zeros(T)
+    for s, ((fwd, bwd, L), r) in enumerate(zip(passes, rots)):
+        c = np.zeros(max_m)  # the weight of each linear model m in rotation s
+        c[1:] = post[2:max_m + 1] * np.exp(lam[s, 1:] - tot[1:])
+        if s == 0:
+            c[0] = post[0]
+        w = c.sum()
+        if not w > 0:
+            continue
+        with np.errstate(divide="ignore"):
+            log_c = np.log(c / w) - fwd[:, T - 1]
+        r_s, e_s, b_s, _ = _moments(r, fwd, bwd, log_c, L, exact)
+        idx = (np.arange(T) + s) % T  # rotated interval j is interval (j + s) mod T
+        rate[idx] += w * r_s
+        ef2[idx] += w * e_s
+        boundary[idx[:-1]] += w * b_s
+        boundary[(s - 1) % T] += c[1:].sum()  # where rotation s starts: a boundary when M >= 2
+    var = np.clip(ef2 - rate**2, 0.0, None)
+    return BinningResult(log_ev, post, rate, np.sqrt(var), boundary, None)
 
 
 def spike_counts(trials, t_start: int, t_end: int) -> tuple[np.ndarray, np.ndarray]:
