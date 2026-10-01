@@ -11,6 +11,8 @@ from bayesbin.core import (
     credible_m_range,
     fit,
     fit_cyclic,
+    latency_posterior,
+    separation_level,
     spike_counts,
 )
 from bayesbin.online import OnlineBinning
@@ -30,6 +32,8 @@ __all__ = [
     "credible_m_range",
     "fit",
     "fit_cyclic",
+    "latency_posterior",
+    "separation_level",
     "spike_counts",
 ]
 __version__ = "0.3.0"

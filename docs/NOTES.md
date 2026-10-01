@@ -52,7 +52,14 @@
    with weights P(M | D) Λ_s / Σ_s' Λ_s'. T linear fits, O(M·T³): fine for a
    day or a week of hours; minutes would need a direct circular recursion
    (also O(M·T³), but without T separate passes' overheads).
-4. **Ports from binsdfc**: latency posteriors, signal separation levels.
+4. **Ports from binsdfc**: all in (2026-10-02). Latencies and separation
+   levels (`latency_posterior`, `separation_level`): P(latency at t) sums,
+   over the number n of bins before t, the forward evidence of 0..t-1 as n bins
+   each weighted by P(rate < level | bin), times one bin [t, b] weighted by
+   P(rate > level), times the plain backward evidence after b; O(M·T²), the
+   sum over b done as a block log-sum-exp. binsdfc maximises P(a latency
+   exists) over the level by 10 golden-section steps; here a bounded scalar
+   search (the maximum is often flat: any level between baseline and response).
    Boundary positions for a fixed M are in (`boundary_positions`: the first
    k + 1 intervals as j bins times the rest as M + 1 - j, over the evidence of
    M). Hyperparameter optimisation is

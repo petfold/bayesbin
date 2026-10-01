@@ -291,6 +291,26 @@ some probability. Don't read the number of boundaries as the number of real
 changes; read the boundary probabilities, which are high only where a change is
 well supported.
 
+**When does the response start?** The response latency (Endres, Schindelin,
+Földiák & Oram 2010) is the first time the rate rises above a *signal
+separation level*, a rate below which the cell counts as not responding: every
+bin before it below the level, and the bin that starts there above it.
+`latency_posterior` gives its probability at each interval, summed over every
+binning:
+
+```python
+from bayesbin import latency_posterior
+
+lat = latency_posterior(BernoulliModel(s, g), 0.03, max_boundaries=20)   # a level between baseline and response
+print(round(float(lat.sum()), 3), int(np.argmax(lat)) - 100, round(float(lat[175:186].sum()), 2))   # 1.0 81 0.96
+```
+
+There is a latency with probability 1.0, the most probable one is 81 ms, and it
+lies within 75–85 ms with probability 0.96 (the true onset: 80 ms). With no level
+in mind, `separation_level(model, max_boundaries)` finds the one at which a
+latency is most probable (here 0.028; it tries a few dozen levels, so it takes a
+while). `inhibitory=True` asks instead when the rate first falls below the level.
+
 ## 7. Tutorial 2: event counts with exposure
 
 A counter records events every day, but it runs for a different number of

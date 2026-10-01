@@ -11,6 +11,15 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- Response latencies (Endres, Schindelin, Földiák & Oram 2010; binsdfc's `-L`,
+  `-y`, `-I`, `-i`): `latency_posterior(model, level, max_boundaries)` gives
+  P(the rate first rises above `level` at interval t | D), every bin before t
+  below it and the bin from t above it, each bin's rate integrated over its
+  posterior and every binning and M summed (a forward pass over the bins'
+  below-level evidences, one above-level bin, the plain backward pass);
+  `separation_level` finds the level at which a latency is most probable;
+  `inhibitory=True` for a fall below the level. Exact against enumeration;
+  on a simulated response at 80 ms, the latency's mode at 80 ± 2 ms.
 - Where each change lies: `boundary_positions(model, M)` gives P(the j-th of M
   boundaries is right after interval k | D, M) for every j and k (binsdfc's
   `-p`), from the forward and backward programmes. Exact against enumerating

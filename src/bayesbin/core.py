@@ -26,12 +26,13 @@ All arithmetic is in log space.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, replace
 from functools import cached_property
 
 import numpy as np
-from scipy.special import gammaln, logsumexp
+from scipy.special import betainc, betaincc, gammainc, gammaincc, gammaln, logsumexp
 
 _NEG_INF = -np.inf
 
@@ -820,6 +821,81 @@ def boundary_positions(model, M: int, *, exact: bool = False) -> np.ndarray:
     fwd, bwd, _ = _passes(model, M, exact)
     j = np.arange(1, M + 1)
     return np.exp(fwd[j - 1, :T - 1] + bwd[M - j, :T - 1] - fwd[M, T - 1])
+
+
+def _bin_tails(model, level: float) -> tuple[np.ndarray, np.ndarray]:
+    """log P(the bin's rate < level | its data) and log P(rate > level) for every bin [a, b]
+    (T×T, -inf below the diagonal): the Beta or Gamma posterior's cdf at the level."""
+    T = model.T
+    a, b = np.triu_indices(T)
+    if isinstance(model, BernoulliModel):
+        cs, cg = np.concatenate([[0.0], np.cumsum(model.s)]), np.concatenate([[0.0], np.cumsum(model.g)])
+        A, B = cs[b + 1] - cs[a] + model.sigma, cg[b + 1] - cg[a] + model.gamma
+        below, above = betainc(A, B, level), betaincc(A, B, level)
+    else:
+        cy, ce = np.concatenate([[0.0], np.cumsum(model.y)]), np.concatenate([[0.0], np.cumsum(model.e)])
+        A, B = cy[b + 1] - cy[a] + model.alpha, ce[b + 1] - ce[a] + model.beta
+        below, above = gammainc(A, B * level), gammaincc(A, B * level)
+    lo, hi = np.full((T, T), _NEG_INF), np.full((T, T), _NEG_INF)
+    with np.errstate(divide="ignore"):
+        lo[a, b], hi[a, b] = np.log(below), np.log(above)
+    return lo, hi
+
+
+def latency_posterior(model, level: float, max_boundaries: int = 10, *, inhibitory: bool = False,
+                      exact: bool = False) -> np.ndarray:
+    """P(the latency is at interval t | D) for t = 0..T-1, at the signal separation level
+    `level` (Endres, Schindelin, Földiák & Oram 2010; binsdfc's -L): every bin before t has
+    its rate below the level, and a bin starts at t with its rate above it (`inhibitory`: above
+    before, below from t). The rates are integrated over each bin's posterior, the binnings and
+    M summed exactly as in fit. Its sum is P(there is a latency | D) at that level; t = 0
+    means above the level from the start. O(M·T²) time, T×T memory; `exact=True` runs the
+    programmes in plain log space (as fit's)."""
+    T = model.T
+    max_m = min(max_boundaries, T - 1)
+    L = model.log_bin_evidence()
+    lo, hi = _bin_tails(model, level)
+    if inhibitory:
+        lo, hi = hi, lo
+    forward = _forward_exact if exact else _forward
+    fwd = forward(L, max_m)
+    bwd = _backward(L, max_m, exact=exact)  # bwd[j, b]: intervals b+1..T-1 as j+1 bins
+    fb = forward(L + lo, max_m)  # intervals 0..k as i+1 bins, each below the level
+    log_ev = np.array([fwd[m, T - 1] - _log_binom(T - 1, m) for m in range(max_m + 1)])
+    w = log_ev - logsumexp(log_ev) - fwd[:, T - 1]  # P(M | D) / Σ over M's binnings
+    K = max_m + 1
+    right = np.full((T, K + 1), _NEG_INF)  # right[b, n]: the n bins after b (none if b = T-1)
+    right[T - 1, 0] = 0.0
+    right[:T - 1, 1:] = bwd[:, :T - 1].T
+    left = np.full((T, K + 1), _NEG_INF)  # left[t, n]: the n bins before t, all below the level
+    left[0, 0] = 0.0
+    left[1:, 1:] = fb[:, :T - 1].T
+    mid = L + hi  # the bin [t, b] above the level (-inf where b < t)
+    R = np.empty((T, K + 1))  # R[t, n]: over the end b of the bin from t, n bins after it
+    for t0 in range(0, T, 64):
+        R[t0:t0 + 64] = logsumexp(mid[t0:t0 + 64, :, None] + right[None], axis=1)
+    tot = np.full(T, _NEG_INF)
+    for M in range(K):  # M boundaries: n before + n after = M
+        terms = left[:, :M + 1] + R[:, M::-1][:, :M + 1]
+        tot = np.logaddexp(tot, w[M] + logsumexp(terms, axis=1))
+    return np.exp(tot)
+
+
+def separation_level(model, max_boundaries: int = 10, *, bounds: tuple[float, float] | None = None,
+                     inhibitory: bool = False) -> tuple[float, float]:
+    """(level, P(there is a latency | D) at it): the signal separation level at which a
+    latency is most probable (binsdfc's -y), by bounded scalar search over `bounds` (default:
+    the range of the rate's posterior mean, from fit)."""
+    from scipy.optimize import minimize_scalar
+
+    if bounds is None:
+        r = fit(model, max_boundaries).rate
+        bounds = (float(r.min()), float(r.max()))
+    if not bounds[1] > bounds[0]:
+        return bounds[0], float(latency_posterior(model, bounds[0], max_boundaries, inhibitory=inhibitory).sum())
+    res = minimize_scalar(lambda x: -latency_posterior(model, x, max_boundaries, inhibitory=inhibitory).sum(),
+                          bounds=bounds, method="bounded", options={"xatol": 1e-4 * (bounds[1] - bounds[0])})
+    return float(res.x), -float(res.fun)
 
 
 def _log_marginal(model, max_boundaries: int, cyclic: bool) -> float:
