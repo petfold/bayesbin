@@ -100,3 +100,4 @@ def test_a_bin_round_midnight_is_one_bin():
     assert cyc.m_map == 2 and lin.m_map == 2  # two bins on the circle, three on the line
     assert cyc.log_marginal > lin.log_marginal
     assert abs(cyc.rate[0] - cyc.rate[T - 1]) < 1e-4 * cyc.rate[0]  # 23:00 and 00:00 share a rate
+

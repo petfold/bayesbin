@@ -52,8 +52,10 @@
    with weights P(M | D) Λ_s / Σ_s' Λ_s'. T linear fits, O(M·T³): fine for a
    day or a week of hours; minutes would need a direct circular recursion
    (also O(M·T³), but without T separate passes' overheads).
-4. **Ports from binsdfc**: latency posteriors, signal separation levels,
-   boundary position posteriors for a fixed M. Hyperparameter optimisation is
+4. **Ports from binsdfc**: latency posteriors, signal separation levels.
+   Boundary positions for a fixed M are in (`boundary_positions`: the first
+   k + 1 intervals as j bins times the rest as M + 1 - j, over the evidence of
+   M). Hyperparameter optimisation is
    in (2026-10-02, `best_prior`): type-II maximum likelihood over the prior's
    two parameters, Nelder-Mead in log space, the evidence from forward passes
    alone. binsdfc's `-P` adds a hyperprior (Gamma(2, 0.03) on the mean firing

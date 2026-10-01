@@ -596,12 +596,18 @@ The units of `rate`: for `BernoulliModel`, a probability per trial per
 interval; for `PoissonModel`, events per unit of exposure (per interval, if you
 gave none).
 
+`boundary_posterior` says where changes are likely, summed over every number of
+them. To ask where each one lies given how many there are, use
+`boundary_positions(model, M)`: row j - 1 is P(the j-th of M boundaries is right
+after interval k), for j = 1..M in order along the axis, each row summing to 1
+(so its spread is the uncertainty in that change's position).
+
 The streaming classes answer from their current state:
 
 | method | `OnlineBinning` | `ChangePointStream` |
 |---|---|---|
 | `rate_now()` | the rate in the latest interval and its sd | the same |
-| where the current segment began | `current_bin_start()`: P(it starts at a) | `run_length_posterior()`, `p_change_within(k)` |
+| where the current segment began | `current_bin_start()`: P(it starts at a) | `run_length_posterior()`, `p_change_within(k)`; with `lag`, `p_change_at(k)` |
 | the next count | `next_pmf(x, size)`, `next_cdf(x, size)` | the same, and `pit(x, size)` |
 | the evidence | `log_evidence`, `m_posterior`, `log_marginal` | `log_marginal` |
 | the past | `fit()`: the batch fit of the data so far | — |

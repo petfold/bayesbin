@@ -21,6 +21,7 @@ BernoulliModel(s, g, sigma=1.0, gamma=32.0)       # s successes, g failures per 
 PoissonModel(y, alpha, beta, e=None)              # y counts, e exposure per interval (default 1); Gamma(alpha, beta) prior (shape, rate)
 PoissonModel.weak_prior(y, e=None, weight=1.0)    # Gamma prior centred on sum(y)/sum(e), worth `weight` events: the usual choice
 r = fit(model, max_boundaries=10, *, m_mass=None, keep_bins=False, min_m_posterior=1e-12, exact=False)
+boundary_positions(model, M, *, exact=False) -> (M, T-1) array: P(the j-th of M boundaries is right after interval k | D, M); rows sum to 1
 model, log_p = best_prior(model, max_boundaries=10, *, cyclic=False, bound=1e5)   # the prior's two parameters chosen by the evidence (type-II ML; Nelder-Mead in log space); warns at a bound
 r = fit_cyclic(model, max_boundaries=10, *, exact=False)   # the intervals on a circle: a bin may wrap from the last to the first;
                                                           # M = 1 impossible (evidence 0); boundary_posterior has T entries

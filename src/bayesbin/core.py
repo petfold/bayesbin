@@ -809,6 +809,19 @@ def fit_cyclic(model, max_boundaries: int = 10, *, exact: bool = False) -> Binni
     return BinningResult(log_ev, post, rate, np.sqrt(var), boundary, None)
 
 
+def boundary_positions(model, M: int, *, exact: bool = False) -> np.ndarray:
+    """P(the j-th of M bin boundaries is after interval k | D, M): row j - 1 for j = 1..M (in
+    order along the axis), column k = 0..T-2, each row summing to 1. Where each change lies,
+    given how many there are (binsdfc's -p): the first k + 1 intervals as j bins and the rest
+    as M + 1 - j, from the forward and backward programmes (O(M·T²))."""
+    T = model.T
+    if not 1 <= M <= T - 1:
+        raise ValueError(f"M must be in 1..T-1 = {T - 1}")
+    fwd, bwd, _ = _passes(model, M, exact)
+    j = np.arange(1, M + 1)
+    return np.exp(fwd[j - 1, :T - 1] + bwd[M - j, :T - 1] - fwd[M, T - 1])
+
+
 def _log_marginal(model, max_boundaries: int, cyclic: bool) -> float:
     """log P(D) of fit (or fit_cyclic) from the forward passes alone, the prior over M
     included."""

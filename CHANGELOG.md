@@ -11,6 +11,10 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- Where each change lies: `boundary_positions(model, M)` gives P(the j-th of M
+  boundaries is right after interval k | D, M) for every j and k (binsdfc's
+  `-p`), from the forward and backward programmes. Exact against enumerating
+  every placement.
 - The prior chosen by the evidence: `best_prior(model, max_boundaries)` returns
   the model with the two parameters of its per-bin prior ((sigma, gamma) or
   (alpha, beta)) that maximise the marginal likelihood (Nelder-Mead in log
