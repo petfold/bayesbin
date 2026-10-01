@@ -1,0 +1,10 @@
+# The paper's pipeline (python -m venv .venv && .venv/bin/pip install -r requirements.txt),
+# plus bayesbin itself from this repository: .venv/bin/pip install -e ../..
+numpy
+scipy
+numba
+matplotlib
+h3>=4
+duckdb
+pyarrow
+threadpoolctl  # with numba: bayesbin's fused kernels (its "fast" extra)

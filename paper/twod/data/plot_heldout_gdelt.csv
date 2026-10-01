@@ -1,0 +1,6 @@
+label;per_event
+greedy merging, bonus 2.3 nats;-0.112648
+greedy merging, no bonus;-0.101497
+fixed grid, resolution 3;-0.0237082
+tree, best partition only;-0.0166771
+tree, averaged over partitions;0.0

@@ -1,0 +1,7 @@
+build/
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+main.pdf

@@ -1,0 +1,128 @@
+{
+ "best_partition": {
+  "bins": 9668,
+  "by_res": {
+   "0": {
+    "area_share": 0.3372543208954602,
+    "bins": 41
+   },
+   "1": {
+    "area_share": 0.28995507342424687,
+    "bins": 245
+   },
+   "2": {
+    "area_share": 0.1689428107930615,
+    "bins": 997
+   },
+   "3": {
+    "area_share": 0.20384779488723126,
+    "bins": 8385
+   }
+  },
+  "empty_bins": 6009,
+  "rate_max": 812.3476865447643,
+  "rate_min": 4.481676338413767e-05
+ },
+ "cells": 41162,
+ "cells_with_events": 4008,
+ "coverage_error": 2.220446049250313e-16,
+ "dataset": "News events (GDELT)",
+ "days": 4.486111111111111,
+ "empty_children": 7338,
+ "events": 127367.0,
+ "first": "2026-09-26",
+ "last": "2026-10-01",
+ "merged": {
+  "empty_regions": 44,
+  "empty_share": 0.7824742250502332,
+  "gamma": 0.1,
+  "largest_events": 0.0,
+  "largest_km2": 396989046.21552426,
+  "regions": 1457
+ },
+ "nodes": 5882,
+ "places": {
+  "Aleutians (52\u00b0N 176\u00b0W)": {
+   "area_km2": 4105751.8888967433,
+   "events": 2.0,
+   "res": 0
+  },
+  "Delhi": {
+   "area_km2": 12833.417729721743,
+   "events": 1696.0,
+   "res": 3
+  },
+  "Hawaii (K\u012blauea)": {
+   "area_km2": 14604.71193313343,
+   "events": 9.0,
+   "res": 3
+  },
+  "Kansas (centre of the US)": {
+   "area_km2": 13050.877087531839,
+   "events": 2643.0,
+   "res": 3
+  },
+  "Lagos": {
+   "area_km2": 10098.624232183065,
+   "events": 690.0,
+   "res": 3
+  },
+  "London": {
+   "area_km2": 11131.585027449137,
+   "events": 1847.0,
+   "res": 3
+  },
+  "Los Angeles": {
+   "area_km2": 13766.435675288007,
+   "events": 941.0,
+   "res": 3
+  },
+  "N Pacific (30\u00b0N 150\u00b0W)": {
+   "area_km2": 4105751.8888967414,
+   "events": 0.0,
+   "res": 0
+  },
+  "Sahara (23\u00b0N 10\u00b0E)": {
+   "area_km2": 96321.8694049571,
+   "events": 0.0,
+   "res": 2
+  },
+  "Siberia (65\u00b0N 100\u00b0E)": {
+   "area_km2": 647574.2582985995,
+   "events": 0.0,
+   "res": 1
+  },
+  "Tokyo": {
+   "area_km2": 11478.705352596755,
+   "events": 254.0,
+   "res": 3
+  },
+  "central Pacific (0\u00b0 160\u00b0W)": {
+   "area_km2": 93157.91589048566,
+   "events": 0.0,
+   "res": 2
+  }
+ },
+ "posterior_expected_bins": {
+  "-1": 0.0,
+  "0": 41.146544340199874,
+  "1": 235.90192975098483,
+  "2": 1115.7381108857696,
+  "3": 7942.903728885177
+ },
+ "prior": {
+  "alpha": 0.1,
+  "beta": 179.65493832878462,
+  "log_evidence": -834067.6814345674,
+  "mean_vs_global": 9.999999999999998,
+  "rho": 0.1
+ },
+ "res": 3,
+ "seconds": {
+  "merge": 1.3655345650040545,
+  "pass": 0.0008050158001424279,
+  "prior_search": 0.26856365099956747,
+  "prior_settings": 336,
+  "tree": 0.10397321799973724
+ }
+}

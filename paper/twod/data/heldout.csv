@@ -1,0 +1,21 @@
+dataset,key,method,bins,logp,vs_best,per_event
+gdelt,world,one rate for the whole Earth,1,-838689,-337089,-4.27182
+gdelt,grid0,"fixed H3 grid, resolution 0",122,-716289,-214690,-2.7207
+gdelt,grid1,"fixed H3 grid, resolution 1",842,-662319,-160720,-2.03675
+gdelt,grid2,"fixed H3 grid, resolution 2",5882,-594928,-93328.7,-1.18272
+gdelt,grid3,"fixed H3 grid, resolution 3",41162,-503470,-1870.82,-0.0237082
+gdelt,tree,"tree, averaged over its partitions",,-501599,0,0
+gdelt,best,"tree, best partition only",7576,-502915,-1315.99,-0.0166771
+gdelt,merged0.1,"best partition, then greedy merging (bonus +2.3 nats per merge)",1051,-510488,-8889.07,-0.112648
+gdelt,merged1,"best partition, then greedy merging (bonus -0.0 nats per merge)",1283,-509608,-8009.12,-0.101497
+gdelt,merged10,"best partition, then greedy merging (bonus -2.3 nats per merge)",7481,-503112,-1512.98,-0.0191735
+usgs,world,one rate for the whole Earth,1,-182618,-59850.1,-5.08194
+usgs,grid0,"fixed H3 grid, resolution 0",122,-154738,-31970.1,-2.71462
+usgs,grid1,"fixed H3 grid, resolution 1",842,-142353,-19585.8,-1.66305
+usgs,grid2,"fixed H3 grid, resolution 2",5882,-131788,-9020.55,-0.765946
+usgs,grid3,"fixed H3 grid, resolution 3",41162,-123545,-777.243,-0.0659967
+usgs,tree,"tree, averaged over its partitions",,-122767,0,0
+usgs,best,"tree, best partition only",6090,-122947,-179.588,-0.015249
+usgs,merged0.1,"best partition, then greedy merging (bonus +2.3 nats per merge)",448,-125851,-3083.04,-0.261785
+usgs,merged1,"best partition, then greedy merging (bonus -0.0 nats per merge)",493,-125651,-2883.47,-0.24484
+usgs,merged10,"best partition, then greedy merging (bonus -2.3 nats per merge)",5833,-123097,-329.102,-0.0279444

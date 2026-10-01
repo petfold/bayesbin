@@ -1,0 +1,24 @@
+{
+ "T": 2048,
+ "bayesbin": {
+  "log_evidence": 33311.51594821787,
+  "m_map": 24,
+  "max_boundaries": 100,
+  "seconds": 2.051704883000639
+ },
+ "binary": {
+  "log_evidence": 33313.91292731671,
+  "rho": 0.5,
+  "rho_at_edge": false,
+  "seconds_per_rho": 21.67784515839885
+ },
+ "dyadic": {
+  "log_evidence": 33266.46871219994,
+  "rho": 0.5,
+  "rho_at_edge": false,
+  "seconds_per_rho": 0.011007597198477015
+ },
+ "events": 23230.0,
+ "max_per_hour": 47.0,
+ "mean_per_hour": 11.3427734375
+}
