@@ -53,6 +53,8 @@ cp.rate_now() -> (mean, sd); cp.p_change_within(k); cp.run_length_posterior() ->
 cp.next_pmf(x, size), cp.next_cdf(x, size), cp.next_logpmf(x, size); cp.log_marginal; cp.n_runs
 cp = ChangePointStream.poisson(alpha, beta, expected_run_length=1000, hazard_strength=1.0)   # learn the hazard: Beta prior, mean 1/1000, weight of 1 change point; exact (joint over run length and number of changes); ~2x the cost
 cp.hazard_posterior() -> (mean, sd)    # fixed hazard: (1/expected_run_length, 0)
+cp = ChangePointStream.poisson(alpha, beta, expected_run_length=1000, lag=12)   # fixed-lag smoothing
+cp.p_change_at(k)                      # P(a segment started at the k-th latest interval | all data so far), k = 1..lag; ~2x the cost
 ```
 
 Bursty/overdispersed counts: `ChangePointStream.overdispersed(alpha, beta, expected_run_length)` -> ChangePointMixture (same methods; `dispersion_posterior()` -> (dispersions, weights)): negative binomial segments averaged over a dispersion grid (0.25..64, inf); ~10x the cost. `ChangePointStream.negbinomial(alpha, beta, dispersion, expected_run_length)` for one known dispersion (NB size per unit exposure).

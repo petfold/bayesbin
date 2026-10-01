@@ -11,6 +11,14 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- When a change happened: `ChangePointStream(..., lag=L)` keeps, for each of the
+  last L intervals, which share of every state entry's probability comes from
+  paths with a segment starting there, so `p_change_at(k)` gives P(a segment
+  started at the k-th latest interval | all data so far): fixed-lag smoothing,
+  sharper than at the time (a 2-to-6 step: 0.05 when it was the latest
+  interval, 0.93 five intervals later). Exact against enumeration, with a
+  fixed or a learnt hazard; about twice the cost per update. Without `lag`,
+  results are bit-identical.
 - Cyclic profiles: `fit_cyclic(model, max_boundaries)` puts the intervals on
   a circle (the hours of a day, the days of a week), so a bin may wrap round
   from the last interval to the first. M boundaries make M bins (one bin for

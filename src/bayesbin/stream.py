@@ -52,6 +52,13 @@ above `prune`, so it costs about twice the fixed hazard's per interval;
 hazard_posterior() gives h's posterior mean and sd. On 5,000 intervals of segments of
 mean length 40 a prior centred on 1/1000 (a = 1) found 0.0239 ± 0.0025.
 
+When did a change happen? With lag=L, p_change_at(k) is P(a segment started at the k-th
+latest interval | all data so far), k <= L: fixed-lag smoothing. The recursion is linear
+in the state, so the probability of the paths with a start at s follows the same update;
+it is kept as each entry's share of the state's probability, which a continuing run keeps
+and a new run takes as the posterior mean of the shares before it (exact against
+enumeration, merging and pruning included). About twice the cost per update.
+
 Probabilities of counts are of the counts themselves: Bernoulli ones include the
 binomial coefficient (the batch evidences of bayesbin.core are of one sequence of
 trials, without it); Poisson ones include 1/y!.
@@ -88,13 +95,14 @@ def _lse(a: np.ndarray, axis: int | None = None):
 class ChangePointStream:
     """Bayesian online change-point detection with conjugate segment rates. Make one
     with ChangePointStream.poisson(...) or ChangePointStream.bernoulli(...). Options (as
-    keywords of either): prune, max_runs, merge_bins, exact_recent (the state, above) and
-    hazard_strength (a learnt hazard: None keeps it fixed at 1/expected_run_length)."""
+    keywords of either): prune, max_runs, merge_bins, exact_recent (the state, above),
+    hazard_strength (a learnt hazard: None keeps it fixed at 1/expected_run_length) and lag
+    (fixed-lag smoothing: p_change_at(k) for the last `lag` intervals)."""
 
     def __init__(self, kind: str, prior: tuple[float, float], expected_run_length: float,
                  prune: float = 1e-12, max_runs: int | None = None, merge_bins: int | None = 32,
                  exact_recent: int = 128, dispersion: float | None = None,
-                 hazard_strength: float | None = None):
+                 hazard_strength: float | None = None, lag: int | None = None):
         if prior[0] <= 0 or prior[1] <= 0:
             raise ValueError("the prior's parameters must be positive")
         if not expected_run_length >= 1:
@@ -107,6 +115,8 @@ class ChangePointStream:
             raise ValueError("negbin: a finite, positive dispersion")
         if hazard_strength is not None and not (hazard_strength > 0 and expected_run_length > 1):
             raise ValueError("hazard_strength must be positive (and expected_run_length > 1)")
+        if lag is not None and not (isinstance(lag, int) and lag >= 1):
+            raise ValueError("lag must be a positive integer (or None)")
         self.kind, self.prior, self.prune, self.max_runs = kind, prior, prune, max_runs
         self.dispersion = dispersion
         self.merge_bins, self.exact_recent = merge_bins, exact_recent
@@ -128,6 +138,11 @@ class ChangePointStream:
         self._p2 = np.zeros((0, 1))
         self._c0 = 0
         self._joint = None  # (T, P(change | c), P(none | c), P(c)): _components for _add_joint
+        # fixed-lag smoothing: for each of the last `lag` intervals s, the share of each state
+        # entry's probability that comes from paths in which a segment starts at s (a share is
+        # kept by a continuing run; a new run's is the posterior mean of the shares before it)
+        self.lag = lag
+        self._q = None  # (lags, runs) or, with a learnt hazard, (lags, runs, c); the oldest first
         self.T = 0
         self.log_marginal = 0.0  # log P(all counts so far): the sum of the log predictives
         # the runs: log posterior, the range of lengths each stands for (lo == hi unless merged),
@@ -370,6 +385,8 @@ class ChangePointStream:
         if self._learn:
             lp = self._add_joint(lpmf)
         else:
+            if self._q is not None:  # a new run's share: the mean of the shares before it
+                self._q = np.concatenate((self._q, (self._q @ np.exp(self._logp))[:, None]), axis=1)
             lp = lw + lpmf
             step = _lse(lp)  # log P(x | data so far)
             self.log_marginal += step
@@ -386,6 +403,7 @@ class ChangePointStream:
         hi = np.concatenate((self._hi, _ZERO_INT)) + 1
         u, v = u + du, v + dv
         keep = lp >= self._log_prune if self.prune > 0 else np.isfinite(lp)
+        new_kept = True  # the new run (the last)
         if keep.all() and (self.max_runs is None or len(lp) <= self.max_runs):
             self._logp, self._lo, self._hi, self._u, self._v = lp, lo, hi, u, v
         else:
@@ -399,9 +417,23 @@ class ChangePointStream:
             self._lo, self._hi, self._u, self._v = lo[keep], hi[keep], u[keep], v[keep]
             if self._learn:
                 self._p2 = self._p2[keep] * math.exp(-z)
+            if self._q is not None:
+                self._q = self._q[:, keep]
+            new_kept = bool(keep[-1])
         if self.merge_bins is not None:
             self._merge()
+        if self.lag is not None:
+            self._start_share(new_kept)
         self.T += 1
+
+    def _start_share(self, new_kept: bool) -> None:
+        """The shares of the interval just added: all of the new run's paths start a segment
+        there, no other's. The oldest are dropped beyond `lag`."""
+        shape = self._p2.shape if self._learn else self._logp.shape
+        q = np.zeros((1, *shape))
+        if new_kept:
+            q[0, -1] = 1.0
+        self._q = q if self._q is None else np.concatenate((self._q, q))[-self.lag:]
 
     def _add_joint(self, lpmf: np.ndarray) -> np.ndarray:
         """The joint posterior of (run, number of change points) after one more interval, each
@@ -413,6 +445,12 @@ class ChangePointStream:
             return np.zeros(1)
         n, m = self._p2.shape
         _, h, h1, col = self._joint  # from _components, at this T
+        if self._q is not None:  # shares: kept by continuing runs; a new run's is the mean
+            Q = np.zeros((len(self._q), n + 1, m + 1))
+            Q[:, :n, :m] = self._q
+            with np.errstate(invalid="ignore", divide="ignore"):
+                Q[:, n, 1:] = np.nan_to_num((self._q * self._p2).sum(axis=1) / col)
+            self._q = Q
         top = float(lpmf.max())
         f = np.exp(lpmf - top)  # each run's pmf of the count (and the prior's), scaled
         P = np.zeros((n + 1, m + 1))
@@ -429,6 +467,8 @@ class ChangePointStream:
         if not (P[:, 0].any() and P[:, -1].any()):  # no mass left at an end of c's range
             cols = np.flatnonzero(P.any(axis=0))
             P = P[:, cols[0]:cols[-1] + 1]
+            if self._q is not None:
+                self._q = self._q[:, :, cols[0]:cols[-1] + 1]
             self._c0 += int(cols[0])
         self._p2 = P
         with np.errstate(divide="ignore"):
@@ -458,6 +498,14 @@ class ChangePointStream:
             if merged is None:
                 continue
             # the bucket's first (longest) component becomes the merged one
+            if self._q is not None:  # its shares: the members', weighted by their probabilities
+                if self._learn:
+                    pa = self._p2[a:b]
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        self._q[:, a] = np.nan_to_num((self._q[:, a:b] * pa).sum(axis=1) / pa.sum(axis=0))
+                else:
+                    w = np.exp(self._logp[a:b] - self._logp[a:b].max())
+                    self._q[:, a] = self._q[:, a:b] @ (w / w.sum())
             self._logp[a], self._u[a], self._v[a] = merged
             self._lo[a] = self._lo[b - 1]
             if self._learn:
@@ -470,6 +518,8 @@ class ChangePointStream:
             self._u, self._v = self._u[keep], self._v[keep]
             if self._learn:
                 self._p2 = self._p2[keep]
+            if self._q is not None:
+                self._q = self._q[:, keep]
 
     def _moment_match(self, a: int, b: int):
         """(log p, u, v) of one component for the runs a..b-1: their total probability and the
@@ -527,6 +577,20 @@ class ChangePointStream:
         p = np.exp(self._logp)
         frac = np.clip((k - self._lo + 1) / (self._hi - self._lo + 1), 0.0, 1.0)
         return float(p @ frac)
+
+    def p_change_at(self, k: int) -> float:
+        """P(a segment started at the k-th latest interval | data so far), k = 1..lag (k = 1:
+        the latest, P(run length = 1)): fixed-lag smoothing, which needs lag >= k. Later
+        intervals' data count too, so it sharpens as they arrive. The first interval always
+        starts one."""
+        if self.lag is None or not 1 <= k <= self.lag:
+            raise ValueError(f"k must be in 1..lag (lag={self.lag})")
+        if k > self.T:
+            raise ValueError(f"only {self.T} intervals so far")
+        q = self._q[len(self._q) - k]
+        if self._learn:
+            return float((q * self._p2).sum() / self._p2.sum())
+        return float(q @ np.exp(self._logp))
 
     def rate_now(self) -> tuple[float, float]:
         """The rate in the latest interval given the data so far, and its standard deviation

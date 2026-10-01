@@ -125,7 +125,7 @@ For data that arrive over time, with the same two likelihoods:
 | class | prior over segmentations | gives | cost per new interval |
 |---|---|---|---|
 | `OnlineBinning` | as `fit`: up to `max_boundaries` boundaries | exactly what `fit` gives for the latest interval, the next count's predictive; `fit()` for the past | grows with the data so far |
-| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` (or learnt: `hazard_strength`) | the rate now, P(recent change), run-length posterior, the next count's predictive and PIT, `hazard_posterior()` | grows with the log of the current segment (old run lengths merged); about 2x with a learnt hazard |
+| `ChangePointStream` | a new segment each interval with probability 1/`expected_run_length` (or learnt: `hazard_strength`) | the rate now, P(recent change), when it changed (`lag`: `p_change_at`), run-length posterior, the next count's predictive and PIT, `hazard_posterior()` | grows with the log of the current segment (old run lengths merged); about 2x with a learnt hazard |
 | `ChangePointStream.overdispersed` (a `ChangePointMixture`) | the same, with negative binomial segments over a grid of dispersions | the same, for bursty counts; `dispersion_posterior()` | about 10x the above |
 
 ## The C++ version: binsdfc-fb

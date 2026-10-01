@@ -505,6 +505,23 @@ range of burstiness levels at once and weights each by how well it has
 predicted the data so far (`dispersion_posterior()` shows the weights). It
 costs about ten times as much per count.
 
+**When did it change?** `p_change_at(k)` is the probability that a segment
+started at the k-th latest interval, with the data since then taken into account
+(fixed-lag smoothing: give `lag`, the number of intervals to look back). One high
+count is weak evidence of a change; a few more settle where it began:
+
+```python
+rng = np.random.default_rng(10)
+step = np.concatenate([rng.poisson(2.0, 400), rng.poisson(6.0, 100)])   # the rate rises at interval 400
+cp = ChangePointStream.poisson(alpha=1.0, beta=0.1, expected_run_length=1000, lag=10)
+cp.update(step[:401])                    # up to interval 400, the first high count
+print(round(cp.p_change_at(1), 2))       # 0.05: P(a segment started at interval 400)
+cp.update(step[401:406])                 # five more intervals
+print(round(cp.p_change_at(6), 2))       # 0.93: the same interval, now the 6th latest
+```
+
+It costs about twice as much per update, for any lag up to a few dozen.
+
 **Choosing `expected_run_length`**: how long, on average, you expect a rate to
 last. It sets how readily the model believes in a change; the results are not
 very sensitive to it within a factor of a few. If you do not know it, let the

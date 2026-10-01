@@ -37,8 +37,12 @@
    c so far (Wilson, Nassar & Gold 2010); c's posterior is narrow (a few dozen
    values above `prune` after 125 changes), and held as probabilities, not
    logs, it costs no exp per entry: about twice the fixed hazard per
-   interval (in logs it was ten times). Left: fixed-lag smoothing, fused
-   (numba) kernels for the updates and the cdf.
+   interval (in logs it was ten times). Fixed-lag smoothing too (`lag`,
+   `p_change_at`): the update is linear in the state, so the mass of the paths
+   with a segment starting at s follows it; kept as each entry's share of the
+   state, it is unchanged by a continuing run, and a new run's share is the
+   posterior mean of the shares before it. Left: fused (numba) kernels for the
+   updates and the cdf.
 3. **Cyclic profiles** (2026-10-02): `fit_cyclic`, a bin may wrap round the
    end of a day or week. A circular partition with M >= 2 boundaries is, from
    each of its boundaries, a linear one with M - 1 of the rotated intervals:

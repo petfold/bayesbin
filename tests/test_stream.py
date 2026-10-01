@@ -98,6 +98,64 @@ def test_a_learnt_hazard_is_exact_against_enumerating_every_segmentation(kind):
         assert cp.hazard_posterior()[0] == pytest.approx(hazard, rel=1e-12)
 
 
+def _starts(kind, x, n, prior, h=None, hazard_prior=None):
+    """P(a segment starts at interval s | x), s = 0..T-1, over every segmentation."""
+    T = len(x)
+    terms, starts_of = [], []
+    for bits in itertools.product([0, 1], repeat=T - 1):
+        starts = [0] + [i + 1 for i, b in enumerate(bits) if b]
+        ends = starts[1:] + [T]
+        c = sum(bits)
+        if hazard_prior is None:
+            lp = c * np.log(h) + (T - 1 - c) * np.log1p(-h)
+        else:
+            lp = betaln(hazard_prior[0] + c, hazard_prior[1] + T - 1 - c) - betaln(*hazard_prior)
+        terms.append(lp + sum(_segment_logev(kind, x[a:b], n[a:b], prior) for a, b in zip(starts, ends)))
+        starts_of.append(starts)
+    w = np.exp(np.array(terms) - logsumexp(terms))
+    out = np.zeros(T)
+    for wi, st in zip(w, starts_of):
+        out[st] += wi
+    return out
+
+
+@pytest.mark.parametrize("kind", ["poisson", "bernoulli"])
+@pytest.mark.parametrize("learn", [False, True])
+def test_fixed_lag_smoothing_is_exact_against_enumeration(kind, learn):
+    """p_change_at(k): P(a segment started k - 1 intervals before the latest | all data so far),
+    the later intervals' data included, for every k up to the lag."""
+    x, n, _ = _small(kind)
+    kw = dict(expected_run_length=4, prune=0, lag=6, hazard_strength=0.7 if learn else None)
+    cp = (ChangePointStream.poisson(1.5, 0.5, **kw) if kind == "poisson"
+          else ChangePointStream.bernoulli(sigma=1.0, gamma=2.0, **kw))
+    for T in range(1, len(x) + 1):
+        cp.update(x[T - 1], n[T - 1])
+        want = _starts(kind, x[:T], n[:T], cp.prior, cp.hazard, (0.7, 2.1) if learn else None)
+        for k in range(1, min(T, 6) + 1):
+            assert cp.p_change_at(k) == pytest.approx(want[T - k], abs=1e-12), (T, k)
+        assert cp.p_change_at(1) == pytest.approx(cp.p_change_within(1), abs=1e-12)
+    with pytest.raises(ValueError):
+        cp.p_change_at(7)
+
+
+def test_smoothing_sharpens_a_change_as_data_arrive():
+    """A step in the rate, 2 to 6 at interval 400: when that interval is the latest, a start
+    there is unlikely (one high count); twelve intervals later it is the likeliest start, and
+    within one interval of it nearly certain. The same with merging and pruning off."""
+    y = np.r_[np.full(400, 2.0), np.full(12, 6.0)]
+    for kw in ({}, {"merge_bins": None, "prune": 0}):
+        cp = ChangePointStream.poisson(1.0, 0.25, expected_run_length=300, lag=14, **kw)
+        seen = []
+        for t, yt in enumerate(y):
+            cp.update(yt)
+            if t >= 400:
+                seen.append(cp.p_change_at(t - 400 + 1))
+        at = [cp.p_change_at(k) for k in (11, 12, 13)]  # starts at 401, 400, 399
+        assert seen[0] < 0.05 and seen[-1] > 0.7 and np.all(np.diff(seen) > 0), seen
+        assert max(at) == at[1] and sum(at) > 0.95, at
+    assert cp.p_change_at(12) == pytest.approx(seen[-1])
+
+
 def test_a_strong_hazard_prior_is_the_fixed_hazard():
     rng = np.random.default_rng(9)
     y = np.concatenate([rng.poisson(lam, 150) for lam in (2, 7, 3, 12)]).astype(float)
