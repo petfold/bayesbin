@@ -655,6 +655,14 @@ to `max_boundaries`. Memory grows only in proportion to both. On a 2012 laptop
   about 1 s on 4 cores). Coarser intervals help, as does folding (Tutorial 4).
 - Long series of a repeating pattern: fold them (Tutorial 4). It is faster and
   it is the better model.
+- The rest, on the same laptop: `fit_cyclic` costs one fit per interval of the
+  cycle (0.1 s for 24 hours, a few seconds for 168); `best_prior` a few dozen
+  to a hundred forward passes (about 3 s at T = 480); `latency_posterior`
+  about 1 s per level at T = 600 (it needs T × T memory), and
+  `separation_level` a few dozen levels. `ChangePointStream` takes 0.1–0.2 ms
+  per update with a few hundred run lengths kept, `pit` about as much again
+  (more for counts above ~10); `hazard_strength` and `lag` each about double
+  that, and `overdispersed` is ten streams.
 
 ## 15. Pitfalls and questions
 
