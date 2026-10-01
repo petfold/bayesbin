@@ -660,8 +660,16 @@ pipeline and a LaTeX draft built from it are in
 2. A tree recursion over a given hierarchy (parent indices), with a fit or a
    stream per node: the space × time model Worldwatch needs. Then the block
    recursion, if one pooling for all time proves too stiff. Tried spatially
-   (above); next, a `ChangePointStream` per node on the replay, and grouping of
-   siblings for the halos.
+   (above), and with a `ChangePointStream` per node on Worldwatch's USGS replay
+   (5-minute windows, the 506 nodes under the 6 base cells of its 12 busiest
+   cells; Worldwatch's doc/research-changepoint-replay.md): the busy cells are
+   never pooled, so they keep the cell model's predictions and alarms exactly,
+   while a fixed coarser cell costs 5.7 nats a day per cell and 2.3 times the
+   alarms. Sparse cells put a third of their weight on the parent; the
+   sparsest gain, the denser lose, and the net is small. 86 minutes on 4 cores,
+   most of it bayesbin's merging of old run lengths (about 1 ms per update
+   under load): the stream's update is the thing to speed up. Next: grouping
+   of siblings for the halos, and pooling that differs by epoch.
 3. Recursive cuts, only if axis-aligned grids are the data and the asymmetry of
    rows-first hurts.
 4. More data for the draft: a longer archive, a finer resolution from the raw
