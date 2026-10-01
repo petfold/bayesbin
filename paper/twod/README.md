@@ -22,10 +22,12 @@ The pipeline reads the events where Worldwatch keeps them; set these to point el
 |---|---|---|
 | `WW_ARCHIVE` | `~/worldwatch-archive` | Worldwatch's Parquet archive (the daily backup, `worldwatch-pull`); news events are the `gdelt_events` stream of its `bins` table |
 | `WW_USGS` | `~/.cache/worldwatch-research/usgs` | the USGS catalogue as CSV (Worldwatch's `research/replay_changepoint/fetch_usgs.py START END`) |
+| `WW_RESEARCH` | `~/.cache/worldwatch-research` | Worldwatch's research results: the streaming replay's `tree_layer0.npz` (its `research/replay_changepoint/tree_layer0.py`, ~20 min on 4 cores) |
 | `TWOD_RES` | `3` | the finest H3 resolution (news cells cannot be finer than the archive's, resolution 3) |
 | `TWOD_QUICK` | unset | `1`: smaller prototype sizes, for a fast check |
 
-More data means: refresh the archive (or fetch a longer USGS period), then `make data && make`.
+More data means: refresh the archive (or fetch a longer USGS period, and rerun Worldwatch's
+`prepare.py` and `tree_layer0.py` for the streaming section), then `make data && make`.
 The held-out test always splits each record at the middle of its time span.
 
 The text's qualitative claims (the tree predicts best, merging predicts worse than the finest grid,
@@ -45,6 +47,7 @@ are visible at once. The numbers themselves update by themselves.
 | `scripts/predict.py` | held-out prediction → `data/heldout.csv`, `data/heldout_*.json` |
 | `scripts/tree1d.py` | 1-D: bayesbin's prior against binary-cut and dyadic trees → `data/tree1d.json` |
 | `scripts/rectangles.py` | rows then columns, recursive cuts: checks, counts, timings → `data/rectangles.json`, `data/timings.csv` |
+| `scripts/stream.py` | the tree streamed over the earthquake counts (Worldwatch's replay), summarised → `data/stream.json` |
 | `scripts/maps.py` | the world maps → `figures/*.pdf` (and `build/*.png` for the web) |
 | `scripts/macros.py` | `data/numbers.tex`, `data/*_table.tex`, `data/plot_*.csv`, the claim checks |
 | `data/` | results the paper reads (committed, so the PDF builds without the event data) |

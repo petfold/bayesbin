@@ -57,7 +57,11 @@ in \newsPass, with the prior chosen by the evidence: empty ocean gets bins of fo
 square kilometres and every city the finest cells the data have. Fitted on the first half of each
 record, the posterior average over the tree's partitions predicts the second half better than every
 fixed grid, for news events and for earthquakes; greedy merging of neighbouring bins gives cleaner
-maps but predicts worse. In one dimension a hierarchical prior adds nothing: a binary-cut tree ties
+maps but predicts worse. Streamed, with a discounted count model in every region and the regions'
+evidence forgotten over three days, the tree brings sparse cells' predictive upper tails to their
+nominal rate over \streamDays\ days of earthquake counts and raises the share of large quakes that
+alarm in their own window from \streamBigAlonePct\ to \streamBigTreePct. In one dimension a hierarchical
+prior adds nothing: a binary-cut tree ties
 with the original prior at many times the cost, and a dyadic tree loses. Nesting stays quadratic in
 the number of cells in any dimension, which makes space--time binning exact.
 \end{abstract}
@@ -94,8 +98,9 @@ needs, however, is a way of building partitions from sub-problems that meet only
 boundaries. \Cref{sec:needs} makes this precise and sorts the natural families of 2-D partitions
 into those that keep an exact sum (\cref{sec:exact}) and those that do not (\cref{sec:notexact}).
 \Cref{sec:experiments} measures the exact ones: their cost on grids, a binning of the globe from
-Worldwatch's news-event and earthquake counts, held-out prediction against fixed grids, and
-whether a hierarchy would help in one dimension. \Cref{sec:higher} sketches three and more
+Worldwatch's news-event and earthquake counts, held-out prediction against fixed grids, the tree
+streamed over three months of earthquake counts, and whether a hierarchy would help in one
+dimension. \Cref{sec:higher} sketches three and more
 dimensions.
 
 % ----------------------------------------------------------------------------------------------
@@ -344,7 +349,10 @@ change-point detection \citep{adams2007bayesian,fearnhead2007online} per node ke
 running evidence, the recursion costs $O(\text{nodes})$ per window, and a cell's predictive for
 the next window is the mixture of its ancestors' predictives weighted by the probability that
 each is the cell's bin given the data so far. The pooling is then the same for all time, so a
-burst in one cell separates it from its neighbours for its whole history.
+burst in one cell separates it from its neighbours for its whole history. Summing each node's log
+predictive scores with a forgetting time instead, as dynamic model averaging does
+\citep{raftery2010online}, lets the pooling follow the data at no extra cost; \cref{sec:streaming}
+tries it.
 
 Both limits go if the sub-problems are blocks: a region $\nu$ over an interval $a..b$ of time is one
 bin, or is cut in time at some $k$, or is split into $\nu$'s children over $a..b$,
@@ -574,6 +582,56 @@ partitions.}
 \label{fig:heldout}
 \end{figure}
 
+\subsection{Streaming over the tree}\label{sec:streaming}
+
+Worldwatch scores the count of each stream in every cell and window by the randomized probability
+integral transform $q = P(Y < y) + u\,P(Y = y)$ under a predictive model of that cell alone: a
+Gamma--Poisson rate discounted with a memory of three days, averaged over a grid of burst factors
+for overdispersed counts. $q$ is uniform when the model is calibrated, and $q \ge 0.999$ (with
+$u$ taken conservatively, for discrete counts) is an alarm. Following \cref{sec:spacetime}, every
+node of the H3 tree above the cells with events ran that same model on its region's summed counts,
+over \streamDays\ days of the USGS catalogue in \streamWindowMinutes-minute windows
+(\streamEvents\ events in \streamCells\ resolution-3 cells, \streamWindows\ windows scored after a
+two-day warm-up). After every window the recursion of \cref{eq:tree}, with $\rho = \streamRho$, on
+the nodes' log predictive scores summed with a forgetting time of three days, gives each node's
+probability of being a cell's bin; the cell's predictive for the next window is the mixture of its
+own and its ancestors' predictives, each at the cell's share of the ancestor's area.
+
+\Cref{tab:streaming} groups the cells by their number of events. Alone, a sparse cell's upper tail
+is too thin, about half the nominal rate of $q > 0.999$ (\streamSparseTailAlone\ and
+\streamRareTailAlone\ per thousand): three days of memory hold a tenth of an event of evidence in a
+cell that sees one a month, so the prior dominates and over-predicts. Pooled, such a cell borrows
+its region's rate, and the tail is nominal (\streamSparseTailTree\ and \streamRareTailTree); a cell
+with one or two events puts \streamRareBase\ of the weight on its resolution-0 region. Busy cells
+keep \streamBusySelf\ of the weight on themselves and barely move, where pooling every cell into its
+fixed resolution-2 parent costs them \streamBusyResTwoLoss\ nats a day each and quadruples their
+tail. Over all cells the log predictive score of the record rises by \streamGain\ nats
+(\streamGainResTwo\ for the fixed resolution-2 bins; \streamGainMonth\ and \streamGainAll\ with a
+forgetting time of 30 days or none). Of the \streamBigQuakes\ quakes of magnitude 5 or more,
+\streamBigTree\ alarm in their own cell and window against \streamBigAlone\ alone, and alarms over
+all cells rise from \streamAlarmsAlone\ to \streamAlarmsTree\ a day, mostly calibration restored. Each
+window costs one vectorised step of every node's model and one pass of the recursion; Worldwatch's
+live scoring has adopted this pooling.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+& & \multicolumn{3}{c}{$q > 0.999$, per thousand} & \multicolumn{2}{c}{log score, nats/day} & own \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-7}
+events & cells & alone & res.~2 & tree & res.~2 & tree & weight \\
+\midrule
+\rows{data/stream_table.tex}
+\bottomrule
+\end{tabular}
+\caption{The tree streamed over \streamDays\ days of earthquake counts in
+\streamWindowMinutes-minute windows, the cells grouped by their number of events: the rate of
+$q > 0.999$ (nominal: 1 per thousand) for each cell alone, pooled into its fixed resolution-2
+parent, and over the tree; the log predictive score per cell and day relative to the cell alone;
+and the mean weight on the cell itself as its bin (with a forgetting time of 30 days).}
+\label{tab:streaming}
+\end{table}
+
 \subsection{Does a hierarchy help in one dimension?}
 
 In one dimension the original prior already sums over every segmentation, so a hierarchy can only
@@ -622,9 +680,10 @@ is quadratic in the number of cells by nature and their sums run in order of rec
 Several things limit the present results. The finest cells are those of the archive (resolution
 \finestRes); finer data would give cities smaller bins at the same cost per node. A child without
 events is taken as one empty bin. The records are short (\newsDays\ days of news), and their volume
-changes over time, which stationary models cannot follow; the change-point models of
-\cref{sec:spacetime} address that, and the burst factor of overdispersed counts can enter each
-region's model. The pipeline that produces every number here reruns on new data
+changes over time, which stationary models cannot follow; the streaming tree of
+\cref{sec:spacetime,sec:streaming} follows it, and brings the sparse cells' predictions to
+calibration. Its regions run a discounted rate with a burst factor; a change-point model per
+region, and pooling that differs between epochs (\cref{eq:blocks}), are left to try. The pipeline that produces every number here reruns on new data
 (\cref{app:repro}).
 
 \bibliographystyle{plainnat}
@@ -636,8 +695,10 @@ region's model. The pipeline that produces every number here reruns on new data
 Every number in this draft is a macro written by \texttt{scripts/macros.py}, every table body and
 plotted series a file in \texttt{data/}, and every map a figure drawn by \texttt{scripts/maps.py},
 all from the pipeline in \texttt{scripts/}: \texttt{globe.py} (the tree over H3 on all the data),
-\texttt{predict.py} (held-out prediction), \texttt{tree1d.py} (the 1-D comparison) and
-\texttt{rectangles.py} (the rectangle families, their checks, counts and timings). \texttt{make data}
+\texttt{predict.py} (held-out prediction), \texttt{tree1d.py} (the 1-D comparison),
+\texttt{rectangles.py} (the rectangle families, their checks, counts and timings) and
+\texttt{stream.py} (the summary of Worldwatch's streaming replay, whose script is its
+\texttt{research/replay\_changepoint/tree\_layer0.py}). \texttt{make data}
 reruns it on the current data and \texttt{make} rebuilds this PDF. Qualitative claims in the text
 are checked against the new results, and any that no longer hold are listed under the abstract.
 

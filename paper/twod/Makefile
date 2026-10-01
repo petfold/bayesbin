@@ -2,14 +2,14 @@
 # `make data` reruns the whole analysis on the current data first (see README.md).
 #
 #   make venv          the pipeline's Python environment (.venv), once
-#   make data          globe, held-out prediction, 1-D comparison, rectangles, maps, then numbers
+#   make data          globe, held-out prediction, 1-D comparison, rectangles, streaming, maps, numbers
 #   make numbers       only the LaTeX macros and generated tables, from the results already in data/
 #   make quick         a fast check of the pipeline (smaller prototype sizes)
 #   make               the PDF
 
 PY ?= .venv/bin/python
 LATEX = pdflatex -interaction=nonstopmode -halt-on-error
-export WW_ARCHIVE WW_USGS TWOD_RES TWOD_QUICK
+export WW_ARCHIVE WW_USGS WW_RESEARCH TWOD_RES TWOD_QUICK
 
 FIGS = figures/globe_bins.pdf figures/globe_zoom.pdf figures/globe_rates.pdf
 
@@ -20,7 +20,7 @@ venv:
 	.venv/bin/pip install -r requirements.txt
 	.venv/bin/pip install -e ../..
 
-data: globe heldout tree1d rectangles maps numbers
+data: globe heldout tree1d rectangles stream maps numbers
 
 globe:
 	$(PY) scripts/globe.py
@@ -30,6 +30,8 @@ tree1d:
 	$(PY) scripts/tree1d.py
 rectangles:
 	$(PY) scripts/rectangles.py
+stream:
+	$(PY) scripts/stream.py
 maps:
 	$(PY) scripts/maps.py
 numbers:
@@ -48,4 +50,4 @@ main.pdf: main.tex refs.bib data/numbers.tex $(FIGS) $(wildcard data/*_table.tex
 clean:
 	rm -f main.aux main.bbl main.blg main.log main.out
 
-.PHONY: all venv data globe heldout tree1d rectangles maps numbers quick clean
+.PHONY: all venv data globe heldout tree1d rectangles stream maps numbers quick clean
