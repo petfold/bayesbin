@@ -703,6 +703,11 @@ class ChangePointMixture:
     def p_change_within(self, k: int) -> float:
         return float(self._weights() @ np.array([m.p_change_within(k) for m in self.members]))
 
+    def p_change_at(self, k: int) -> float:
+        """P(a segment started at the k-th latest interval | data so far), averaged over the
+        dispersions (needs lag; see ChangePointStream.p_change_at)."""
+        return float(self._weights() @ np.array([m.p_change_at(k) for m in self.members]))
+
     def hazard_posterior(self) -> tuple[float, float]:
         """The hazard's posterior mean and sd, averaged over the dispersions."""
         w = self._weights()

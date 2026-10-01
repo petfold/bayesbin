@@ -154,6 +154,11 @@ def test_smoothing_sharpens_a_change_as_data_arrive():
         assert seen[0] < 0.05 and seen[-1] > 0.7 and np.all(np.diff(seen) > 0), seen
         assert max(at) == at[1] and sum(at) > 0.95, at
     assert cp.p_change_at(12) == pytest.approx(seen[-1])
+    mix = ChangePointStream.overdispersed(1.0, 0.25, expected_run_length=300, lag=14, hazard_strength=1.0)
+    mix.update(y)
+    w = mix.dispersion_posterior()[1]
+    assert mix.p_change_at(12) == pytest.approx(w @ [m.p_change_at(12) for m in mix.members])
+    assert 0.5 < mix.p_change_at(12) <= 1 and 0 < mix.hazard_posterior()[0] < 0.05
 
 
 def test_a_strong_hazard_prior_is_the_fixed_hazard():
