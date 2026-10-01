@@ -668,8 +668,18 @@ pipeline and a LaTeX draft built from it are in
    alarms. Sparse cells put a third of their weight on the parent; the
    sparsest gain, the denser lose, and the net is small. 86 minutes on 4 cores,
    most of it bayesbin's merging of old run lengths (about 1 ms per update
-   under load): the stream's update is the thing to speed up. Next: grouping
-   of siblings for the halos, and pooling that differs by epoch.
+   under load): the stream's update is the thing to speed up. With Layer 0's
+   own model on every node instead (BayesianCount, vectorized; Worldwatch's
+   `tree_layer0.py`, the whole tree, all 1,708 cells scored), the pooled
+   mixture with a 3-day forgetting time gains 12,448 nats over 90 days, brings
+   the sparse cells' upper tail from half its nominal mass to nominal, and
+   raises the M >= 5 quakes alarmed in their window from 58% to 72%; busy cells
+   unchanged. Now in Worldwatch as an opt-in for count stanzas (its ADR 0005,
+   on for `usgs_seismic`): through its live scorer a week of the catalogue runs
+   at 137 ms a tick against 543, with P(q > 0.999) 0.00125 against 0.00036
+   (nominal 0.001), and injected swarms in sparse cells are caught 11 times in
+   12 against 9. Next: grouping of siblings for the halos, and pooling that
+   differs by epoch.
 3. Recursive cuts, only if axis-aligned grids are the data and the asymmetry of
    rows-first hurts.
 4. More data for the draft: a longer archive, a finer resolution from the raw
