@@ -208,9 +208,10 @@ the PyPI package. Timings against bayesbin are in the tables below.
   more than 10⁻¹³ (relative, evidences) or 10⁻¹⁴ (absolute, bin posterior),
   that entry is recomputed exactly in log space, and `exact=True` does
   everything that way. See the timings below.
-- Not yet ported from the original: latency posteriors, signal separation
-  levels, hyperparameter optimisation (`-P`), bin-boundary position posteriors
-  for a fixed M (`-p`).
+- Ported from the original since: the prior chosen by the evidence
+  (`best_prior`, binsdfc's `-P`, without its hyperprior). Not yet: latency
+  posteriors, signal separation levels, bin-boundary position posteriors for
+  a fixed M (`-p`).
 - Streams: `ChangePointStream` keeps the run lengths up to `exact_recent`
   exactly and merges older ones into logarithmic buckets (moment matching),
   which bounds its state at a cost of at most 3·10⁻⁴ (relative, in the sd;

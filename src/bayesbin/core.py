@@ -809,6 +809,57 @@ def fit_cyclic(model, max_boundaries: int = 10, *, exact: bool = False) -> Binni
     return BinningResult(log_ev, post, rate, np.sqrt(var), boundary, None)
 
 
+def _log_marginal(model, max_boundaries: int, cyclic: bool) -> float:
+    """log P(D) of fit (or fit_cyclic) from the forward passes alone, the prior over M
+    included."""
+    T = model.T
+    if not cyclic:
+        max_m = min(max_boundaries, T - 1)
+        fwd = _forward(model, max_m)
+        log_ev = fwd[:, T - 1] - np.array([_log_binom(T - 1, m) for m in range(max_m + 1)])
+        return float(logsumexp(log_ev) - np.log(max_boundaries + 1) + model.log_data_constant())
+    max_m = min(max_boundaries, T)
+    if max_m < 2:
+        return _log_marginal(model, 0, False) - float(np.log(max_boundaries + 1))
+    lam = np.array([_forward(_rotated(model, s), max_m - 1)[:, T - 1] for s in range(T)])
+    tot = logsumexp(lam, axis=0)
+    log_ev = [lam[0, 0]] + [tot[M - 1] - np.log(T) - _log_binom(T - 1, M - 1) for M in range(2, max_m + 1)]
+    return float(logsumexp(log_ev) - np.log(max_boundaries + 1) + model.log_data_constant())
+
+
+def best_prior(model, max_boundaries: int = 10, *, cyclic: bool = False, bound: float = 1e5):
+    """(the model with its prior chosen by the evidence, its log marginal likelihood): the
+    two parameters of the prior on each bin's rate, (sigma, gamma) of a BernoulliModel or
+    (alpha, beta) of a PoissonModel, that maximise P(D) (type-II maximum likelihood, as
+    binsdfc's -P without its hyperprior), searched by Nelder-Mead in log space from the
+    model's own, within [1/bound, bound]. A prior at a bound (as when the data show no
+    change: the best prior is then a point at their rate) is reported by a warning.
+    `cyclic`: for fit_cyclic. Each step is a forward pass (T of them for cyclic)."""
+    import warnings
+
+    from scipy.optimize import minimize
+
+    names = ("sigma", "gamma") if isinstance(model, BernoulliModel) else ("alpha", "beta")
+    lim = float(np.log(bound))
+
+    def at(x):
+        return replace(model, **dict(zip(names, np.exp(np.clip(x, -lim, lim)))))
+
+    def objective(x):
+        return -_log_marginal(at(x), max_boundaries, cyclic)
+
+    x0 = np.log([getattr(model, n) for n in names])
+    res = minimize(objective, x0, method="Nelder-Mead",
+                   options={"xatol": 1e-4, "fatol": 1e-9, "maxiter": 2000, "initial_simplex":
+                            np.array([x0, x0 + [0.5, 0.0], x0 + [0.0, 0.5]])})
+    best = at(res.x)
+    if np.any(np.abs(res.x) >= lim - 1e-3):
+        warnings.warn(f"best_prior: a parameter reached the bound {bound:g} ({names[0]} = "
+                      f"{getattr(best, names[0]):.4g}, {names[1]} = {getattr(best, names[1]):.4g})",
+                      RuntimeWarning, stacklevel=2)
+    return best, -float(res.fun)
+
+
 def spike_counts(trials, t_start: int, t_end: int) -> tuple[np.ndarray, np.ndarray]:
     """(s, g) per interval t_start..t_end (inclusive) from spike trains given as
     integer spike times, one iterable per trial -- the paper's representation,

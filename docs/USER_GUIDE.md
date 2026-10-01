@@ -560,6 +560,12 @@ There are few, and the defaults are sensible.
   - `PoissonModel.weak_prior(y, e, weight=1)`: a Gamma prior centred on the
     overall rate, worth `weight` events. Or give it yourself:
     `PoissonModel(y, alpha, beta, e)` with mean α / β, worth α events.
+  - Or let the data choose: `model, log_p = best_prior(model, max_boundaries)`
+    returns the model with the prior that makes the data most probable (both
+    parameters, by the evidence; the original program's `-P`), then `fit(model,
+    ...)` as usual. With many bins it finds the spread of their rates; with
+    data that never change it would make the prior a point (it warns). Add
+    `cyclic=True` for `fit_cyclic`.
 - **`m_mass`** (default: average over every number of boundaries, as the paper
   recommends): `m_mass=0.9` averages over the smallest range of numbers of
   boundaries holding 90% probability, and `m_mass=0.0` uses the most probable

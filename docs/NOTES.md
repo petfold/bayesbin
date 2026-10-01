@@ -53,7 +53,13 @@
    day or a week of hours; minutes would need a direct circular recursion
    (also O(M·T³), but without T separate passes' overheads).
 4. **Ports from binsdfc**: latency posteriors, signal separation levels,
-   hyperparameter optimisation, boundary position posteriors for a fixed M.
+   boundary position posteriors for a fixed M. Hyperparameter optimisation is
+   in (2026-10-02, `best_prior`): type-II maximum likelihood over the prior's
+   two parameters, Nelder-Mead in log space, the evidence from forward passes
+   alone. binsdfc's `-P` adds a hyperprior (Gamma(2, 0.03) on the mean firing
+   probability, Gamma(2, 1) on (σ² + γ²)/2) against degenerate optima; here a
+   bound and a warning instead (data with no change drive the prior to a
+   point, where the evidence keeps rising).
 5. **2-D** (below: where the method stops being 1-D). Rows into bands, each
    band's columns its own 1-D fit, is exact at O(M·N²) for N cells and needs no
    new kernel (a prototype agreed with enumeration); recursive cuts are exact

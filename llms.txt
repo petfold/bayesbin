@@ -12,7 +12,7 @@
 ## API
 
 ```python
-from bayesbin import BernoulliModel, PoissonModel, fit, spike_counts, credible_m_range
+from bayesbin import BernoulliModel, PoissonModel, fit, fit_cyclic, best_prior, spike_counts, credible_m_range
 
 s, g = spike_counts(trials, t_start, t_end)       # trials: iterables of int event times; t_end inclusive
                                                   # -> s[k] trials with an event in interval k, g[k] without;
@@ -21,6 +21,7 @@ BernoulliModel(s, g, sigma=1.0, gamma=32.0)       # s successes, g failures per 
 PoissonModel(y, alpha, beta, e=None)              # y counts, e exposure per interval (default 1); Gamma(alpha, beta) prior (shape, rate)
 PoissonModel.weak_prior(y, e=None, weight=1.0)    # Gamma prior centred on sum(y)/sum(e), worth `weight` events: the usual choice
 r = fit(model, max_boundaries=10, *, m_mass=None, keep_bins=False, min_m_posterior=1e-12, exact=False)
+model, log_p = best_prior(model, max_boundaries=10, *, cyclic=False, bound=1e5)   # the prior's two parameters chosen by the evidence (type-II ML; Nelder-Mead in log space); warns at a bound
 r = fit_cyclic(model, max_boundaries=10, *, exact=False)   # the intervals on a circle: a bin may wrap from the last to the first;
                                                           # M = 1 impossible (evidence 0); boundary_posterior has T entries
                                                           # (the last: between the last interval and the first); cost ~ T fits

@@ -11,6 +11,13 @@
   weighted by their marginal likelihoods, with the same interface and
   `dispersion_posterior()`. On overdispersed counts its PIT is uniform where
   the Poisson segments' is not (tested); exact against enumeration.
+- The prior chosen by the evidence: `best_prior(model, max_boundaries)` returns
+  the model with the two parameters of its per-bin prior ((sigma, gamma) or
+  (alpha, beta)) that maximise the marginal likelihood (Nelder-Mead in log
+  space; forward passes only), and that log marginal; `cyclic=True` for
+  `fit_cyclic`. binsdfc's `-P`, without its hyperprior. On rates drawn from
+  Gamma(3, 0.5), 60 segments: mean 6 within 20%. Warns when a parameter
+  reaches its bound (data with no change: the best prior is a point).
 - When a change happened: `ChangePointStream(..., lag=L)` keeps, for each of the
   last L intervals, which share of every state entry's probability comes from
   paths with a segment starting there, so `p_change_at(k)` gives P(a segment
