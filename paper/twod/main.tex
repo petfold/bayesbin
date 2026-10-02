@@ -616,8 +616,16 @@ and rare cells' tails from \emscSparseTailAlone\ and \emscRareTailAlone\ to \ems
 \emscRareTailTree\ per thousand, busy cells keeping \emscBusySelf\ of the weight on themselves (a
 fixed resolution-2 bin takes their tail to \emscBusyTailResTwo\ per thousand), the record's log score up by
 \emscGain\ nats, and \emscBigTreePct\ of its \emscBigQuakes\ quakes of magnitude 5 or more alarmed in
-their window against \emscBigAlonePct\ alone. Each window costs one vectorised step of every node's
-model and one pass of the recursion; Worldwatch's live scoring has adopted this pooling.
+their window against \emscBigAlonePct\ alone. On news (\gdeltArticles\ articles of GDELT over \gdeltRecordDays\
+days, counted per resolution-3 cell in 15-minute windows, \gdeltCells\ cells, \gdeltDays\ days
+scored) the gain is smaller
+and the forgetting time matters more: \gdeltGain\ nats with three days, \gdeltGainMonth\ with
+thirty, \gdeltGainResTwo\ for fixed resolution-2 bins (a city is not its region), sparse cells'
+tails from \gdeltSparseTailAlone\ to \gdeltSparseTailTree\ per thousand, busy cells \gdeltBusySelf\
+on themselves. A cell's share of its ancestor's rate is here its share of the area, which suits
+earthquakes better than news, whose events follow people. Each window costs one vectorised step of
+every node's model and one pass of the recursion; Worldwatch's live scoring has adopted this
+pooling for its earthquake counts.
 
 \begin{table}[t]
 \centering\small

@@ -7,8 +7,8 @@ Worldwatch's count model (a discounted Gamma-Poisson with a grid of burst factor
 counts, the nodes' log predictive scores summed with a forgetting time, the tree recursion after
 every window, every cell with events scored. It saves its per-cell tallies to tree_layer0.npz in
 WW_RESEARCH (default ~/.cache/worldwatch-research); this script only reads them (seconds). The
-same replay on the EMSC catalogue (TREE_CATALOGUE=emsc, tree_layer0_emsc.npz), when there, goes to
-data/stream_emsc.json.
+same replay on the EMSC catalogue and on GDELT's news counts (TREE_CATALOGUE=emsc, gdelt), when
+there, goes to data/stream_emsc.json and data/stream_gdelt.json.
 """
 
 import json
@@ -20,7 +20,6 @@ import numpy as np
 from common import DATA
 
 RESEARCH = Path(os.environ.get("WW_RESEARCH", Path.home() / ".cache" / "worldwatch-research"))
-WARMUP = 2 * 288  # windows before scoring starts (tree_layer0.py's)
 RHO = 0.1  # a node's prior probability of being one bin (tree_layer0.py's)
 ALONE, RES2, TREE = "cell alone (Layer 0 today)", "the resolution-2 cell", "tree, memory 3 days"
 CLASSES = [("busy", "300 or more", 300, None), ("medium", "31--299", 31, 299),
@@ -32,9 +31,10 @@ def main():
     if not path.exists():
         raise SystemExit(f"{path} not found: run Worldwatch's research/replay_changepoint/tree_layer0.py first")
     summarise(path, DATA / "stream.json")
-    emsc = RESEARCH / "tree_layer0_emsc.npz"  # the EMSC catalogue (TREE_CATALOGUE=emsc), if replayed
-    if emsc.exists():
-        summarise(emsc, DATA / "stream_emsc.json")
+    for name in ("emsc", "gdelt"):  # the EMSC catalogue and GDELT's news (TREE_CATALOGUE=...), if replayed
+        path = RESEARCH / f"tree_layer0_{name}.npz"
+        if path.exists():
+            summarise(path, DATA / f"stream_{name}.json")
 
 
 def summarise(path, out_path):
@@ -42,9 +42,11 @@ def summarise(path, out_path):
     variants = [str(v) for v in R["variants"]]
     names, events = [str(x) for x in R["names"]], R["events"]
     T, width = int(R["T"]), int(R["width"])
-    n = T - WARMUP
+    warmup = 2 * 86400 // width  # tree_layer0.py's: two days
+    n = T - warmup
     days = n * width / 86400
     out = {"cells": len(names), "events": int(events.sum()), "windows": n, "days": days,
+           "record_days": T * width / 86400,
            "window_seconds": width, "rho": RHO, "variants": variants, "classes": {}}
     for key, label, lo, hi in CLASSES:
         sel = (events >= lo) & (events <= (hi if hi is not None else np.inf))
@@ -66,7 +68,7 @@ def summarise(path, out_path):
     out["log_score_gain"] = {name: float((R["logp"][v] - R["logp"][0]).sum()) for v, name in enumerate(variants)}
     out["alarms_per_day"] = {name: float(R["alarms"][v].sum() / days) for v, name in enumerate(variants)}
     keep = dict(zip([str(x) for x in R["keep_names"]], R["keep"], strict=True))
-    big = [(int(w), str(c), float(mg)) for w, c, mg in R["big"] if int(w) >= WARMUP]
+    big = [(int(w), str(c), float(mg)) for w, c, mg in R["big"] if int(w) >= warmup]
     out["big"] = {"quakes": len(big), "min_mag": 5.0,
                   "in_window": {name: int(sum(keep[c][v, w] >= 0.999 for w, c, _ in big if c in keep))
                                 for v, name in enumerate(variants)},

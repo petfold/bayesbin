@@ -53,6 +53,11 @@ def signed(x, digits):
     return f"${x:+.{digits}f}$"
 
 
+def signed_big(x):
+    """A signed whole number with thousands separators, as math."""
+    return "$" + f"{x:+,.0f}".replace(",", "{,}") + "$"
+
+
 def claim(ok, text):
     if not ok:
         warnings.append(text)
@@ -284,6 +289,22 @@ if (DATA / "stream_emsc.json").exists():  # the same replay on the EMSC catalogu
     claim(se["log_score_gain"][TREE] > max(se["log_score_gain"][RES2], se["log_score_gain"]["tree, memory 30 days"]) > 0,
           "streaming, EMSC: the tree with a 3-day forgetting time scores best")
     claim(be["in_window"][TREE] > be["in_window"][ALONE], "streaming, EMSC: more large quakes alarm in their window pooled")
+if (DATA / "stream_gdelt.json").exists():  # the same replay on GDELT's news counts, 15-minute windows
+    sg = read_json("stream_gdelt.json")
+    cg = sg["classes"]
+    m("gdeltCells", num(sg["cells"]))
+    m("gdeltArticles", num(sg["events"]))
+    m("gdeltDays", f"{sg['days']:.0f}")
+    m("gdeltGain", num(sg["log_score_gain"][TREE]))
+    m("gdeltGainMonth", signed_big(sg["log_score_gain"]["tree, memory 30 days"]))
+    m("gdeltGainResTwo", signed_big(sg["log_score_gain"][RES2]))
+    m("gdeltRecordDays", f"{sg['record_days']:.0f}")
+    m("gdeltSparseTailAlone", f"{1000 * cg['sparse']['variants'][ALONE]['p999']:.2f}")
+    m("gdeltSparseTailTree", f"{1000 * cg['sparse']['variants'][TREE]['p999']:.2f}")
+    m("gdeltBusySelf", pct(cg["busy"]["weight_by_res"][3]))
+    claim(sg["log_score_gain"][TREE] > 0 > sg["log_score_gain"]["tree, memory 30 days"],
+          "streaming, news: the 3-day tree gains, a 30-day memory loses")
+    claim(sg["log_score_gain"][RES2] < -1e5, "streaming, news: a fixed resolution-2 bin loses heavily")
 
 # --- write ----------------------------------------------------------------------------------------
 with open(DATA / "numbers.tex", "w") as f:

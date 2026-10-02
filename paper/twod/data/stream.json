@@ -3,6 +3,7 @@
  "events": 24500,
  "windows": 25919,
  "days": 89.99652777777777,
+ "record_days": 91.99652777777777,
  "window_seconds": 300,
  "rho": 0.1,
  "variants": [
